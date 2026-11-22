@@ -85,16 +85,16 @@ const difficultyEl = document.getElementById('difficulty');
 
 const WORLD_W = 2400;
 const WORLD_H = 1600;
-let ZOOM = 2.2;          // ★ базовый
-let ZOOM_TARGET = 2.2;   // ★ плавное следование
-const ZOOM_DYNAMIC_MAX = 1.30;  // ★ максимум +30% при близком волке
-const ZOOM_PROXIMITY_RADIUS = 220; // ★ радиус тревоги (волк ближе — зум растёт)
-const ZOOM_LERP_SPEED = 3.5;       // ★ скорость плавного зума
+let ZOOM = 2.2;
+let ZOOM_TARGET = 2.2;
+const ZOOM_DYNAMIC_MAX = 1.30;
+const ZOOM_PROXIMITY_RADIUS = 220;
+const ZOOM_LERP_SPEED = 3.5;
 
 const RELOAD_TIME       = 10;
 const SPAWN_INTERVAL    = 8;
 const WOLVES_PER_WAVE   = 2;
-const HUNTER_RANGE      = 220;
+const HUNTER_RANGE      = 280;   // ★ было 220 — увеличено
 const WOLF_SPEED        = 130;
 const ATTRACT_RADIUS    = 280;
 const HEDGEHOG_SPEED    = 170;
@@ -119,12 +119,12 @@ const BULLET_LIFE  = 1.2;
 const FIRE_PARTICLES_PER_SEC = 18;
 
 // ===== СЕРДЕЧКИ =====
-const HEART_DROP_CHANCE = 0.20;  // ★ шанс
-const HEART_LIFETIME    = 20;    // ★ сек
-const HEART_PICKUP_R    = 22;    // ★ радиус подбора
+const HEART_DROP_CHANCE = 0.20;
+const HEART_LIFETIME    = 20;
+const HEART_PICKUP_R    = 22;
 
 // ===== АНИМАЦИЯ СМЕРТИ =====
-const DEATH_DURATION = 0.45;     // ★ сек
+const DEATH_DURATION = 0.45;
 
 // ===== ВИДИМОСТЬ ВОЛКОВ =====
 const VISIBLE_NEAR_FIRE     = 260;
@@ -172,8 +172,8 @@ let wolves = [];
 let bullets = [];
 let fireParticles = [];
 let fireSpawnAccum = 0;
-let hearts = [];               // ★ сердечки на земле
-let deathFx = [];              // ★ эффекты смерти
+let hearts = [];
+let deathFx = [];
 let ammo = 1;
 let reloadTimer = 0;
 let spawnTimer = 0;
@@ -286,7 +286,6 @@ function drawWolfEyes(w) {
 
 // ===== CANVAS =====
 function computeBaseZoom() {
-    // ★ базовый зум побольше: 2.2 на узких, до 2.7 на широких
     const raw = canvas.width / 800;
     return Math.min(2.7, Math.max(2.2, raw * 1.6));
 }
@@ -306,7 +305,6 @@ resizeCanvas();
 function viewW() { return canvas.width  / ZOOM; }
 function viewH() { return canvas.height / ZOOM; }
 
-// ★ Динамический зум по близости волка к ежу
 function updateZoom(dt) {
     let base = computeBaseZoom();
     let maxProximity = 0;
@@ -314,7 +312,7 @@ function updateZoom(dt) {
         if (w.dead || w.state === 'dying') continue;
         const d = dist(w, hedgehog);
         if (d < ZOOM_PROXIMITY_RADIUS) {
-            const k = 1 - d / ZOOM_PROXIMITY_RADIUS; // 0..1
+            const k = 1 - d / ZOOM_PROXIMITY_RADIUS;
             if (k > maxProximity) maxProximity = k;
         }
     }
@@ -422,7 +420,7 @@ function startGame() {
     hedgehog.x = 1200; hedgehog.y = 980; hedgehog.hp = 3; hedgehog.angle = Math.PI / 2;
     hunter.hp = 3; hunter.target = null; hunter.angle = Math.PI / 2;
     wolves = []; sparks = []; bullets = []; fireParticles = []; damageFlash = 0;
-    hearts = []; deathFx = [];          // ★
+    hearts = []; deathFx = [];
     fireSpawnAccum = 0;
     ammo = 1; reloadTimer = 0;
     spawnTimer = SPAWN_INTERVAL - INITIAL_DELAY;
@@ -529,7 +527,6 @@ function getLOSBlock(from, to) {
     return best;
 }
 
-// ★ Смерть волка с анимацией + выпадение сердечка
 function killWolf(wolf, byTrap = false) {
     if (wolf.state === 'dying') return;
     wolf.state = 'dying';
@@ -549,7 +546,6 @@ function killWolf(wolf, byTrap = false) {
             color: Math.random() < 0.5 ? 'rgba(200, 30, 30,' : 'rgba(255, 180, 80,'
         }))
     });
-    // сердечко — только если не ловушка
     if (!byTrap && Math.random() < HEART_DROP_CHANCE) {
         hearts.push({
             x: wolf.x, y: wolf.y,
@@ -615,7 +611,7 @@ function updateWolves(dt) {
     wolves.forEach(wolf => {
         if (wolf.state === 'dying') {
             wolf.deathT += dt;
-            return; // не двигается, не атакует
+            return;
         }
         const dH = dist(wolf, hedgehog), dHunt = dist(wolf, hunter);
         if (breakTimer > 0) {
@@ -653,7 +649,7 @@ function updateWolves(dt) {
         traps.forEach(trap => {
             if (trap.active && dist(wolf, trap) < trap.r) {
                 trap.active = false;
-                killWolf(wolf, true); // ★ byTrap = true
+                killWolf(wolf, true);
             }
         });
     });
@@ -665,13 +661,11 @@ function updateWolves(dt) {
     });
 }
 
-// ★ Обновление сердечек
 function updateHearts(dt) {
     hearts.forEach(h => {
         h.life -= dt;
         h.bobPhase += dt * 3;
     });
-    // подбор
     for (const h of hearts) {
         if (h.life <= 0) continue;
         if (dist(h, hedgehog) < HEART_PICKUP_R + hedgehog.radius) {
@@ -687,14 +681,13 @@ function updateHearts(dt) {
     hearts = hearts.filter(h => h.life > 0);
 }
 
-// ★ Обновление эффектов смерти
 function updateDeathFx(dt) {
     deathFx.forEach(fx => {
         fx.ttl -= dt;
         fx.parts.forEach(p => {
             p.x += p.vx * dt;
             p.y += p.vy * dt;
-            p.vy += 200 * dt; // гравитация
+            p.vy += 200 * dt;
             p.life -= dt;
         });
     });
@@ -728,7 +721,7 @@ function updateBullets(dt) {
         if (b.target && !b.target.dead && b.target.state !== 'dying') {
             const d = Math.hypot(b.target.x - b.x, b.target.y - b.y);
             if (d < b.target.radius + 12) {
-                killWolf(b.target);   // ★
+                killWolf(b.target);
                 sparks.push({ x: b.target.x, y: b.target.y, ttl: 0.35, maxTtl: 0.35 });
                 b.dead = true;
             }
@@ -868,7 +861,6 @@ function draw() {
 
     ctx.restore();
 
-    // ============ СЛОЙ ТЬМЫ ============
     const cx = (campfire.x - cam.x) * ZOOM;
     const cy = (campfire.y - cam.y) * ZOOM;
     const litR = 200 * ZOOM;
@@ -882,7 +874,6 @@ function draw() {
     ctx.fillStyle = darkGrad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ============ ФОНАРИК ЕЖА ============
     const hx = (hedgehog.x - cam.x) * ZOOM;
     const hy = (hedgehog.y - cam.y) * ZOOM;
     const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300 * (ZOOM / 2.2));
@@ -892,15 +883,13 @@ function draw() {
     ctx.fillStyle = hGrad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ============ ВОЛКИ ============
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
 
     wolves.forEach(w => {
         if (w.state === 'dying') {
-            // ★ анимация смерти: вращение + затухание + уменьшение
-            const t = w.deathT / DEATH_DURATION; // 0..1
+            const t = w.deathT / DEATH_DURATION;
             const alpha = 1 - t;
             const scale = 1 - t * 0.6;
             drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF + w.spin * t,
@@ -932,7 +921,6 @@ function draw() {
         }
     });
 
-    // ============ ПЕРСОНАЖИ ============
     const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
     const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4.5 * pulse);
     fg.addColorStop(0, 'rgba(255, 200, 50, 0.55)');
@@ -943,22 +931,18 @@ function draw() {
     ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2);
     ctx.fill();
 
-    // ★ Сердечки на земле
     hearts.forEach(h => {
         const bob = Math.sin(h.bobPhase) * 4;
-        const alpha = h.life < 3 ? (h.life / 3) * 0.8 + 0.2 : 1; // мигание перед исчезновением
+        const alpha = h.life < 3 ? (h.life / 3) * 0.8 + 0.2 : 1;
         const color = h.type === 'hedgehog' ? '#ff5577' : '#ffcc66';
         const outline = h.type === 'hedgehog' ? '#ffdde3' : '#fff1c8';
-        // свечение
         ctx.fillStyle = h.type === 'hedgehog' ? 'rgba(255, 85, 119, 0.25)' : 'rgba(255, 204, 102, 0.25)';
         ctx.beginPath();
         ctx.arc(h.x, h.y + bob, 18, 0, Math.PI * 2);
         ctx.fill();
-        // сердечко
         drawHeart(h.x, h.y + bob, 9, color, outline, alpha);
     });
 
-    // ★ Частицы от эффектов смерти
     deathFx.forEach(fx => {
         fx.parts.forEach(p => {
             const a = Math.max(0, p.life / p.maxLife);
@@ -969,7 +953,6 @@ function draw() {
         });
     });
 
-    // Частицы костра
     fireParticles.forEach(p => {
         const a = Math.max(0, p.life / p.maxLife);
         ctx.fillStyle = `hsla(${p.hue}, 100%, 60%, ${a * 0.9})`;
@@ -982,7 +965,6 @@ function draw() {
         ctx.fill();
     });
 
-    // Охотник
     drawShadow(hunter.x, hunter.y + 12, 22);
     drawRotatedSprite('hunter', hunter.x, hunter.y, hunter.angle + ROT_OFFSET_HUNTER, SPRITES.hunter.size);
     ctx.save();
@@ -1038,7 +1020,6 @@ function draw() {
         ctx.fillText('⏳ ' + reloadTimer.toFixed(1), hunter.x, hunter.y - 46);
     }
 
-    // Пули
     bullets.forEach(b => {
         if (b.trail.length > 1) {
             for (let i = 0; i < b.trail.length - 1; i++) {
@@ -1058,13 +1039,11 @@ function draw() {
         ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
     });
 
-    // Ёж
     drawShadow(hedgehog.x, hedgehog.y + 8, 16);
     ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
     drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
     ctx.globalAlpha = 1;
 
-    // Искры
     sparks.forEach(s => {
         const a = s.ttl / s.maxTtl;
         ctx.fillStyle = 'rgba(255, 220, 100, ' + a + ')';
@@ -1113,7 +1092,6 @@ function draw() {
     } else breakStatus.style.display = 'none';
 }
 
-// ★ Рисует сердечко
 function drawHeart(cx, cy, size, fill, outline, alpha = 1) {
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -1136,15 +1114,15 @@ function gameLoop(t) {
     lastTime = t;
     if (damageFlash > 0) damageFlash = Math.max(0, damageFlash - dt);
     if (gameState === 'playing') {
-        updateZoom(dt);             // ★
+        updateZoom(dt);
         updateHedgehog(dt);
         checkBushEntry();
         updateWolves(dt);
         updateHunter(dt);
         updateBullets(dt);
         updateFireParticles(dt);
-        updateHearts(dt);           // ★
-        updateDeathFx(dt);          // ★
+        updateHearts(dt);
+        updateDeathFx(dt);
         updateSparks(dt);
         if (breakTimer > 0) {
             breakTimer -= dt;
