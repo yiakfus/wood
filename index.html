@@ -50,8 +50,18 @@ canvas { display: block; background: #050a07; touch-action: none; }
     padding: 18px 60px; min-height: 64px; font-size: clamp(18px, 5vw, 22px);
     font-family: monospace; cursor: pointer; border-radius: 6px;
     letter-spacing: 3px; touch-action: manipulation; font-weight: bold;
+    margin: 4px;
 }
 #overlay button:active { background: #4a6a50; }
+#diff-buttons { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+#diff-buttons button { padding: 16px 40px; min-height: 56px; font-size: clamp(15px, 4vw, 18px); letter-spacing: 2px; }
+#diff-buttons .easy { background: #2d4a32; border-color: #6fae7b; }
+#diff-buttons .normal { background: #4a4a2d; border-color: #aeae6f; }
+#diff-buttons .hard { background: #4a2d2d; border-color: #ae6f6f; }
+#diff-buttons .easy:active { background: #3d5f42; }
+#diff-buttons .normal:active { background: #5f5f3d; }
+#diff-buttons .hard:active { background: #5f3d3d; }
+#diff-note { color: #8a9a7a; font-size: clamp(11px, 2.8vw, 12px); margin-bottom: 16px; }
 </style>
 </head>
 <body>
@@ -59,7 +69,7 @@ canvas { display: block; background: #050a07; touch-action: none; }
 <div id="hud">
     <div>❤️ Ёж <b id="hedgehogHP">3</b> · 🎯 Охотник <b id="hunterHP">3</b></div>
     <div>⏳ <b id="reloadStatus">Готов</b></div>
-    <div>🔥 <b id="difficulty">0</b> · 💀 <b id="kills">0</b></div>
+    <div>🔥 <b id="difficulty">0</b> · 💀 <b id="kills">0</b> · ⭐ <b id="diffLabel">—</b></div>
     <div id="break-status">⏸ Передышка <b id="breakTime">10.0</b>с</div>
     <div id="buttons">
         <button id="pause-btn">⏸ Пауза</button>
@@ -67,8 +77,13 @@ canvas { display: block; background: #050a07; touch-action: none; }
 </div>
 <div id="overlay">
     <h1 id="ov-title">Ночная тайга</h1>
-    <p id="ov-text">Ёж бежит за пальцем или курсором. Волки осторожны: держатся на расстоянии выстрела и ждут момента, чтобы напасть со спины. Заманивай их в ямы: каждая убивает одного и восстанавливается после 5 убийств. Каждые 5 убийств — передышка. В кустах можно спрятаться — тогда волки переключатся на охотника. Ёж — приманка: если волк заметил ежа, он забывает об охотнике.</p>
-    <button id="ov-btn">СТАРТ</button>
+    <p id="ov-text">Ёж бежит за пальцем или курсором. Волки осторожны: держатся на расстоянии выстрела и ждут момента, чтобы напасть со спины. Заманивай их в ямы. Ёж — приманка: если волк заметил ежа, он забывает об охотнике. Убей 25 волков, чтобы победить.</p>
+    <div id="diff-note">Выбери сложность:</div>
+    <div id="diff-buttons">
+        <button class="easy" data-diff="easy">🟢 Лёгкий</button>
+        <button class="normal" data-diff="normal">🟡 Средний</button>
+        <button class="hard" data-diff="hard">🔴 Тяжёлый</button>
+    </div>
 </div>
 
 <script>
@@ -77,11 +92,13 @@ const ctx = canvas.getContext('2d');
 const overlay = document.getElementById('overlay');
 const ovTitle = document.getElementById('ov-title');
 const ovText  = document.getElementById('ov-text');
-const ovBtn   = document.getElementById('ov-btn');
 const pauseBtn = document.getElementById('pause-btn');
 const breakStatus = document.getElementById('break-status');
 const breakTimeEl = document.getElementById('breakTime');
 const difficultyEl = document.getElementById('difficulty');
+const diffLabelEl = document.getElementById('diffLabel');
+const diffButtons = document.getElementById('diff-buttons');
+const diffNote = document.getElementById('diff-note');
 
 const WORLD_W = 2400;
 const WORLD_H = 1600;
@@ -91,66 +108,107 @@ const ZOOM_DYNAMIC_MAX = 1.30;
 const ZOOM_PROXIMITY_RADIUS = 220;
 const ZOOM_LERP_SPEED = 3.5;
 
-const RELOAD_TIME       = 10;
-const SPAWN_INTERVAL    = 8;
-const WOLVES_PER_WAVE   = 2;
-const HUNTER_RANGE      = 280;
-const WOLF_SPEED        = 130;
+// ===== БАЗОВЫЕ КОНСТАНТЫ (не зависят от сложности) =====
 const ATTRACT_RADIUS    = 280;
 const HEDGEHOG_SPEED    = 170;
 const INITIAL_DELAY     = 3;
 const WOLF_SEPARATION   = 10;
 const SEARCH_TIME       = 5;
 const TRAP_RELOAD_KILLS = 5;
-const BREAK_KILLS       = 5;
+const BREAK_KILLS_BASE  = 5;
+const BREAK_KILLS_AFTER_WIN = 4;
 const BREAK_DURATION    = 10;
 const FLEE_SPEED_MULT   = 1.6;
 const FLEE_DESPAWN_DIST = 700;
-const MAX_WOLVES_PER_WAVE    = 6;
-const MIN_SPAWN_INTERVAL     = 4;
-const DIFFICULTY_SPAWN_STEP  = 0.5;
-const DIFFICULTY_SPEED_STEP  = 5;
+const RELOAD_TIME       = 10;
+const MIN_SPAWN_INTERVAL = 4;
+const DIFFICULTY_SPAWN_STEP = 0.5;
+const DIFFICULTY_SPEED_STEP = 5;
+const WOLF_APPROACH_JITTER = 0.4;
+const WOLF_STRIKE_ANGLE = 100 * Math.PI / 180;
+const WOLF_CIRCLE_SPEED = 1.0;
+const WOLF_COMMIT_SPEED = 1.15;
+const WOLF_RETREAT_MIN  = 150;
+const HUNTER_TARGET_CONE = 70 * Math.PI / 180;
 
-// ===== ПУЛИ =====
+// ===== ПУЛИ / ЧАСТИЦЫ / СЕРДЦА / СМЕРТЬ =====
 const BULLET_SPEED = 900;
 const BULLET_LIFE  = 1.2;
-
-// ===== ЧАСТИЦЫ КОСТРА =====
 const FIRE_PARTICLES_PER_SEC = 18;
-
-// ===== СЕРДЕЧКИ =====
-const HEART_DROP_CHANCE = 0.20;
-const HEART_LIFETIME    = 20;
-const HEART_PICKUP_R    = 22;
-
-// ===== АНИМАЦИЯ СМЕРТИ =====
+const HEART_LIFETIME = 20;
+const HEART_PICKUP_R = 22;
 const DEATH_DURATION = 0.45;
 
-// ===== ВИДИМОСТЬ ВОЛКОВ =====
+// ===== ВИДИМОСТЬ =====
 const VISIBLE_NEAR_FIRE     = 260;
 const VISIBLE_NEAR_HEDGEHOG = 220;
-
-// ===== УМНЫЕ ВОЛКИ =====
-const WOLF_SAFE_DIST      = 320;
-const WOLF_CIRCLE_DIST    = 340;
-const WOLF_STRIKE_DIST    = 180;
-const WOLF_STRIKE_ANGLE   = 100 * Math.PI / 180;
-const WOLF_RETREAT_MIN    = 150;
-const WOLF_PATIENCE       = 6;
-const WOLF_CIRCLE_SPEED   = 1.0;
-const WOLF_STRIKE_SPEED   = 1.4;
-const WOLF_COMMIT_SPEED   = 1.15;
-const WOLF_APPROACH_JITTER = 0.4;
-
-// ===== ОХОТНИК: КОНУС И ПОВОРОТ =====
-const HUNTER_TARGET_CONE  = 70 * Math.PI / 180;
-const HUNTER_TURN_SPEED   = Math.PI * 2;
-const HUNTER_TURN_DELAY   = 0.4;
 
 // ===== ПОВОРОТЫ СПРАЙТОВ =====
 const ROT_OFFSET_HEDGEHOG = -Math.PI / 2;
 const ROT_OFFSET_WOLF     = -Math.PI / 2;
 const ROT_OFFSET_HUNTER   = -Math.PI / 2;
+
+// ===== ЦЕЛЬ ПОБЕДЫ =====
+const WIN_KILLS = 25;
+
+// ===== СЛОЖНОСТИ =====
+const DIFFICULTIES = {
+    easy: {
+        label: 'Лёгкий',
+        wolfSpeed: 130,
+        wolfPatience: 8,
+        wolfSafeDist: 360,
+        wolfCircleDist: 360,
+        wolfStrikeDist: 180,
+        wolfStrikeSpeed: 1.25,
+        spawnInterval: 10,
+        wolvesPerWave: 1,
+        maxWolvesPerWave: 5,
+        hunterRange: 300,
+        hunterTurnSpeed: Math.PI * 3,   // 540°/с
+        hunterTurnDelay: 0.2,
+        heartDropChance: 0.30,
+        recordKey: 'nightTaigaRecord_easy'
+    },
+    normal: {
+        label: 'Средний',
+        wolfSpeed: 130,
+        wolfPatience: 6,
+        wolfSafeDist: 320,
+        wolfCircleDist: 340,
+        wolfStrikeDist: 180,
+        wolfStrikeSpeed: 1.4,
+        spawnInterval: 8,
+        wolvesPerWave: 2,
+        maxWolvesPerWave: 6,
+        hunterRange: 280,
+        hunterTurnSpeed: Math.PI * 2,   // 360°/с
+        hunterTurnDelay: 0.4,
+        heartDropChance: 0.20,
+        recordKey: 'nightTaigaRecord_normal'
+    },
+    hard: {
+        label: 'Тяжёлый',
+        wolfSpeed: 145,
+        wolfPatience: 4,
+        wolfSafeDist: 280,
+        wolfCircleDist: 320,
+        wolfStrikeDist: 180,
+        wolfStrikeSpeed: 1.5,
+        spawnInterval: 7,
+        wolvesPerWave: 2,
+        maxWolvesPerWave: 7,
+        hunterRange: 260,
+        hunterTurnSpeed: Math.PI * 1.5, // 270°/с
+        hunterTurnDelay: 0.6,
+        heartDropChance: 0.15,
+        recordKey: 'nightTaigaRecord_hard'
+    }
+};
+
+// ===== ТЕКУЩАЯ СЛОЖНОСТЬ =====
+let currentDiffKey = 'normal';
+let D = DIFFICULTIES[currentDiffKey];
 
 // ===== СПРАЙТЫ =====
 const SPRITES = {
@@ -205,6 +263,12 @@ let cam = { x: 0, y: 0 };
 let mouseScreen = null;
 let lastTime = performance.now();
 let damageFlash = 0;
+let winShown = false;
+
+function getBreakKills() { return winShown ? BREAK_KILLS_AFTER_WIN : BREAK_KILLS_BASE; }
+function getWolvesPerWave() { return Math.min(D.wolvesPerWave + breakCount, D.maxWolvesPerWave); }
+function getSpawnInterval() { return Math.max(D.spawnInterval - breakCount * DIFFICULTY_SPAWN_STEP, MIN_SPAWN_INTERVAL); }
+function getWolfSpeed()     { return D.wolfSpeed + breakCount * DIFFICULTY_SPEED_STEP; }
 
 const fireflies = [];
 for (let i = 0; i < 45; i++) {
@@ -217,14 +281,9 @@ for (let i = 0; i < 45; i++) {
     });
 }
 
-function getWolvesPerWave() { return Math.min(WOLVES_PER_WAVE + breakCount, MAX_WOLVES_PER_WAVE); }
-function getSpawnInterval() { return Math.max(SPAWN_INTERVAL - breakCount * DIFFICULTY_SPAWN_STEP, MIN_SPAWN_INTERVAL); }
-function getWolfSpeed()     { return WOLF_SPEED + breakCount * DIFFICULTY_SPEED_STEP; }
-
 const keys = {};
 window.addEventListener('keydown', e => {
     keys[e.key] = true;
-    if ((e.key === ' ' || e.key === 'Enter') && gameState !== 'playing' && gameState !== 'paused') startGame();
     if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
         if (gameState === 'playing') pauseGame();
         else if (gameState === 'paused') resumeGame();
@@ -236,13 +295,9 @@ function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
 function randRange(a, b) { return a + Math.random() * (b - a); }
 function isHedgehogHidden() { return bushes.some(b => dist(hedgehog, b) < b.r); }
-
 function isWolfVisible(w) {
-    return dist(w, campfire) < VISIBLE_NEAR_FIRE ||
-           dist(w, hedgehog) < VISIBLE_NEAR_HEDGEHOG;
+    return dist(w, campfire) < VISIBLE_NEAR_FIRE || dist(w, hedgehog) < VISIBLE_NEAR_HEDGEHOG;
 }
-
-// ===== УГЛЫ =====
 function angleFromHunterTo(px, py) {
     const dx = px - hunter.x, dy = py - hunter.y;
     const len = Math.hypot(dx, dy);
@@ -260,35 +315,30 @@ function pointBehindHunter(r) {
     };
 }
 
+// ===== РЕКОРДЫ =====
+function getRecord() {
+    const v = localStorage.getItem(D.recordKey);
+    return v ? parseInt(v, 10) : 0;
+}
+function setRecord(v) {
+    const prev = getRecord();
+    if (v > prev) localStorage.setItem(D.recordKey, v);
+}
+
 // ===== ХЕЛПЕРЫ РИСОВАНИЯ =====
 function drawSprite(key, x, y, sizeOverride) {
     const s = SPRITES[key];
     const size = sizeOverride || s.size;
-    if (s.loaded) {
-        ctx.drawImage(s.img, x - size/2, y - size/2, size, size);
-    } else {
-        ctx.beginPath();
-        ctx.arc(x, y, size * 0.35, 0, Math.PI * 2);
-        ctx.fillStyle = '#444';
-        ctx.fill();
-    }
+    if (s.loaded) ctx.drawImage(s.img, x - size/2, y - size/2, size, size);
+    else { ctx.beginPath(); ctx.arc(x, y, size * 0.35, 0, Math.PI * 2); ctx.fillStyle = '#444'; ctx.fill(); }
 }
 function drawRotatedSprite(key, x, y, angle, sizeOverride, alpha = 1) {
     const s = SPRITES[key];
     const size = sizeOverride || s.size;
     if (s.loaded) {
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.translate(x, y);
-        ctx.rotate(angle);
-        ctx.drawImage(s.img, -size/2, -size/2, size, size);
-        ctx.restore();
-    } else {
-        ctx.beginPath();
-        ctx.arc(x, y, size * 0.35, 0, Math.PI * 2);
-        ctx.fillStyle = '#444';
-        ctx.fill();
-    }
+        ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.rotate(angle);
+        ctx.drawImage(s.img, -size/2, -size/2, size, size); ctx.restore();
+    } else { ctx.beginPath(); ctx.arc(x, y, size * 0.35, 0, Math.PI * 2); ctx.fillStyle = '#444'; ctx.fill(); }
 }
 function drawShadow(x, y, radius, opacity = 0.4) {
     ctx.beginPath();
@@ -296,27 +346,28 @@ function drawShadow(x, y, radius, opacity = 0.4) {
     ctx.fillStyle = `rgba(0, 0, 0, ${opacity})`;
     ctx.fill();
 }
-
 function drawWolfEyes(w) {
-    const eyeDist = 10;
-    const eyeSpread = 6;
+    const eyeDist = 10, eyeSpread = 6;
     const perp = w.angle + Math.PI / 2;
     for (const sign of [1, -1]) {
         const ex = w.x + Math.cos(w.angle) * eyeDist + Math.cos(perp) * eyeSpread * sign;
         const ey = w.y + Math.sin(w.angle) * eyeDist + Math.sin(perp) * eyeSpread * sign;
-        ctx.beginPath();
-        ctx.arc(ex, ey, 7, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255, 40, 20, 0.22)';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(ex, ey, 4, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255, 60, 30, 0.5)';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(ex, ey, 2.2, 0, Math.PI * 2);
-        ctx.fillStyle = '#ff3322';
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(ex, ey, 7, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255, 40, 20, 0.22)'; ctx.fill();
+        ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255, 60, 30, 0.5)'; ctx.fill();
+        ctx.beginPath(); ctx.arc(ex, ey, 2.2, 0, Math.PI * 2); ctx.fillStyle = '#ff3322'; ctx.fill();
     }
+}
+function drawHeart(cx, cy, size, fill, outline, alpha = 1) {
+    ctx.save(); ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    const s = size;
+    ctx.moveTo(cx, cy + s * 0.7);
+    ctx.bezierCurveTo(cx + s * 1.3, cy - s * 0.2, cx + s * 0.6, cy - s * 1.1, cx, cy - s * 0.4);
+    ctx.bezierCurveTo(cx - s * 0.6, cy - s * 1.1, cx - s * 1.3, cy - s * 0.2, cx, cy + s * 0.7);
+    ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.strokeStyle = outline; ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
 }
 
 // ===== CANVAS =====
@@ -357,60 +408,46 @@ function updateZoom(dt) {
 
 // ===== ГЕНЕРАЦИЯ МИРА =====
 function generateWorld() {
-    obstacles = [];
-    bushes = [];
-
+    obstacles = []; bushes = [];
     for (let i = 0; i < 100; i++) {
         for (let tries = 0; tries < 40; tries++) {
-            const x = randRange(60, WORLD_W - 60);
-            const y = randRange(60, WORLD_H - 60);
-            const r = randRange(28, 38);
+            const x = randRange(60, WORLD_W - 60), y = randRange(60, WORLD_H - 60), r = randRange(28, 38);
             if (Math.hypot(x - 1200, y - 800) < 280 + r) continue;
             if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 25)) continue;
-            obstacles.push({ x, y, r, type: 'tree' });
-            break;
+            obstacles.push({ x, y, r, type: 'tree' }); break;
         }
     }
     for (let i = 0; i < 30; i++) {
         for (let tries = 0; tries < 40; tries++) {
-            const x = randRange(60, WORLD_W - 60);
-            const y = randRange(60, WORLD_H - 60);
-            const r = randRange(20, 30);
+            const x = randRange(60, WORLD_W - 60), y = randRange(60, WORLD_H - 60), r = randRange(20, 30);
             if (Math.hypot(x - 1200, y - 800) < 280 + r) continue;
             if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 25)) continue;
-            obstacles.push({ x, y, r, type: 'rock' });
-            break;
+            obstacles.push({ x, y, r, type: 'rock' }); break;
         }
     }
-
     for (let i = 0; i < 6; i++) {
         for (let tries = 0; tries < 100; tries++) {
             const angle = Math.random() * Math.PI * 2;
             const dR = randRange(220, 380);
-            const x = 1200 + Math.cos(angle) * dR;
-            const y = 800  + Math.sin(angle) * dR;
+            const x = 1200 + Math.cos(angle) * dR, y = 800 + Math.sin(angle) * dR;
             const r = randRange(50, 65);
             if (Math.hypot(x - 1200, y - 800) < 200 + r) continue;
             if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 20)) continue;
             if (bushes.some(b => Math.hypot(b.x - x, b.y - y) < b.r + r + 60)) continue;
-            bushes.push({ x, y, r });
-            break;
+            bushes.push({ x, y, r }); break;
         }
     }
     for (let i = 0; i < 8; i++) {
         for (let tries = 0; tries < 40; tries++) {
-            const x = randRange(80, WORLD_W - 80);
-            const y = randRange(80, WORLD_H - 80);
-            const r = randRange(50, 65);
+            const x = randRange(80, WORLD_W - 80), y = randRange(80, WORLD_H - 80), r = randRange(50, 65);
             if (Math.hypot(x - 1200, y - 800) < 300 + r) continue;
             if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 20)) continue;
             if (bushes.some(b => Math.hypot(b.x - x, b.y - y) < b.r + r + 60)) continue;
-            bushes.push({ x, y, r });
-            break;
+            bushes.push({ x, y, r }); break;
         }
     }
     generateTraps();
@@ -449,8 +486,127 @@ canvas.addEventListener('pointermove', setPointer);
 canvas.addEventListener('pointerdown', setPointer);
 canvas.addEventListener('pointercancel', () => { mouseScreen = null; });
 
-// ===== ЖИЗНЕННЫЙ ЦИКЛ =====
-function startGame() {
+// ===== ОВЕРЛЕЙ =====
+function showMenu() {
+    gameState = 'menu';
+    ovTitle.textContent = 'Ночная тайга';
+    ovText.textContent = 'Ёж бежит за пальцем или курсором. Волки осторожны: держатся на расстоянии выстрела и ждут момента, чтобы напасть со спины. Заманивай их в ямы. Ёж — приманка: если волк заметил ежа, он забывает об охотнике. Убей 25 волков, чтобы победить.';
+    diffNote.style.display = 'block';
+    diffButtons.style.display = 'flex';
+    overlay.classList.remove('hidden');
+}
+function hideMenu() {
+    overlay.classList.add('hidden');
+    diffButtons.style.display = 'none';
+    diffNote.style.display = 'none';
+}
+function showWinOverlay() {
+    gameState = 'won';
+    const rec = getRecord();
+    const isNew = kills > rec;
+    if (isNew) setRecord(kills);
+    ovTitle.textContent = '🏆 ПОБЕДА!';
+    ovText.innerHTML = 'Ты убил 25 волков!<br><br>' +
+        'Сложность: <b>' + D.label + '</b><br>' +
+        'Убито: <b>' + kills + '</b><br>' +
+        'Уровень: <b>' + breakCount + '</b><br>' +
+        'Рекорд: <b>' + Math.max(rec, kills) + '</b>' + (isNew ? ' 🎉' : '') +
+        '<br><br>Игра продолжается — теперь на рекорд! Сложность будет расти быстрее.';
+    diffButtons.style.display = 'none';
+    diffNote.style.display = 'none';
+    overlay.classList.remove('hidden');
+    // оверлей с одной кнопкой "ПРОДОЛЖИТЬ"
+    if (diffNote.nextElementSibling && diffNote.nextElementSibling.id === 'win-continue') {
+        diffNote.nextElementSibling.remove();
+    }
+    const btn = document.createElement('button');
+    btn.id = 'win-continue';
+    btn.textContent = 'ПРОДОЛЖИТЬ — НА РЕКОРД';
+    btn.onclick = () => { hideMenu(); gameState = 'playing'; lastTime = performance.now(); };
+    overlay.appendChild(btn);
+}
+function endGame() {
+    gameState = 'over';
+    setRecord(kills);
+    const rec = getRecord();
+    const isNew = kills >= rec && kills > 0;
+    ovTitle.textContent = 'Игра окончена';
+    ovText.innerHTML = 'Убито: <b>' + kills + '</b><br>' +
+        'Уровень: <b>' + breakCount + '</b><br>' +
+        'Сложность: <b>' + D.label + '</b><br>' +
+        'Рекорд: <b>' + rec + '</b>' + (isNew ? ' 🎉' : '');
+    diffButtons.style.display = 'none';
+    diffNote.style.display = 'none';
+    // удаляем win-кнопку если была
+    const oldWin = document.getElementById('win-continue');
+    if (oldWin) oldWin.remove();
+    // создаём кнопку "Заново" + "Сменить сложность"
+    let restartBtn = document.getElementById('restart-btn');
+    if (!restartBtn) {
+        restartBtn = document.createElement('button');
+        restartBtn.id = 'restart-btn';
+        restartBtn.textContent = 'ЗАНОВО';
+        restartBtn.onclick = () => startGame(currentDiffKey);
+        overlay.appendChild(restartBtn);
+    }
+    let changeBtn = document.getElementById('change-btn');
+    if (!changeBtn) {
+        changeBtn = document.createElement('button');
+        changeBtn.id = 'change-btn';
+        changeBtn.textContent = 'СМЕНИТЬ СЛОЖНОСТЬ';
+        changeBtn.style.fontSize = 'clamp(13px, 3.5vw, 16px)';
+        changeBtn.style.padding = '14px 30px';
+        changeBtn.onclick = () => {
+            const oldRestart = document.getElementById('restart-btn');
+            if (oldRestart) oldRestart.remove();
+            changeBtn.remove();
+            showMenu();
+        };
+        overlay.appendChild(changeBtn);
+    }
+    overlay.classList.remove('hidden');
+}
+function pauseGame() {
+    if (gameState !== 'playing') return;
+    gameState = 'paused';
+    ovTitle.textContent = 'Пауза';
+    ovText.innerHTML = 'Игра остановлена.<br>Сложность: <b>' + D.label + '</b><br>Убито: <b>' + kills + '</b>';
+    diffButtons.style.display = 'none';
+    diffNote.style.display = 'none';
+    const oldWin = document.getElementById('win-continue');
+    if (oldWin) oldWin.remove();
+    const oldRestart = document.getElementById('restart-btn');
+    if (oldRestart) oldRestart.remove();
+    const oldChange = document.getElementById('change-btn');
+    if (oldChange) oldChange.remove();
+    let resumeBtn = document.getElementById('resume-btn');
+    if (!resumeBtn) {
+        resumeBtn = document.createElement('button');
+        resumeBtn.id = 'resume-btn';
+        resumeBtn.textContent = 'ПРОДОЛЖИТЬ';
+        resumeBtn.onclick = () => resumeGame();
+        overlay.appendChild(resumeBtn);
+    }
+    overlay.classList.remove('hidden');
+}
+function resumeGame() {
+    if (gameState !== 'paused') return;
+    gameState = 'playing';
+    hideMenu();
+    lastTime = performance.now();
+}
+pauseBtn.addEventListener('click', pauseGame);
+
+// ===== СТАРТ =====
+diffButtons.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-diff]');
+    if (!btn) return;
+    startGame(btn.dataset.diff);
+});
+
+function startGame(diffKey) {
+    currentDiffKey = diffKey;
+    D = DIFFICULTIES[diffKey];
     resizeCanvas();
     hedgehog.x = 1200; hedgehog.y = 980; hedgehog.hp = 3; hedgehog.angle = Math.PI / 2;
     hunter.hp = 3; hunter.target = null; hunter.angle = Math.PI / 2; hunter.turnDelay = 0;
@@ -458,40 +614,24 @@ function startGame() {
     hearts = []; deathFx = [];
     fireSpawnAccum = 0;
     ammo = 1; reloadTimer = 0;
-    spawnTimer = SPAWN_INTERVAL - INITIAL_DELAY;
+    spawnTimer = D.spawnInterval - INITIAL_DELAY;
     kills = 0; killsSinceReload = 0; killsSinceBreak = 0; breakTimer = 0;
     breakCount = 0; hedgehogWasHidden = false; mouseScreen = null;
+    winShown = false;
     generateWorld();
     traps.forEach(t => { t.active = true; });
     gameState = 'playing';
-    overlay.classList.add('hidden');
+    hideMenu();
+    // очищаем динамические кнопки
+    ['win-continue', 'restart-btn', 'change-btn', 'resume-btn'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    });
+    diffLabelEl.textContent = D.label;
     const vw = viewW(), vh = viewH();
     if (vw >= WORLD_W) cam.x = (WORLD_W - vw) / 2; else cam.x = clamp(hedgehog.x - vw / 2, 0, WORLD_W - vw);
     if (vh >= WORLD_H) cam.y = (WORLD_H - vh) / 2; else cam.y = clamp(hedgehog.y - vh / 2, 0, WORLD_H - vh);
 }
-function endGame() {
-    gameState = 'over';
-    ovTitle.textContent = 'Игра окончена';
-    ovText.textContent = 'Убито: ' + kills + ' · Уровень: ' + breakCount;
-    ovBtn.textContent = 'ЗАНОВО';
-    overlay.classList.remove('hidden');
-}
-function pauseGame() {
-    if (gameState !== 'playing') return;
-    gameState = 'paused';
-    ovTitle.textContent = 'Пауза';
-    ovText.textContent = 'Игра остановлена.';
-    ovBtn.textContent = 'ПРОДОЛЖИТЬ';
-    overlay.classList.remove('hidden');
-}
-function resumeGame() {
-    if (gameState !== 'paused') return;
-    gameState = 'playing';
-    overlay.classList.add('hidden');
-    lastTime = performance.now();
-}
-ovBtn.addEventListener('click', () => { if (gameState === 'paused') resumeGame(); else startGame(); });
-pauseBtn.addEventListener('click', pauseGame);
 
 // ===== ФИЗИКА =====
 function resolveObstacles(entity) {
@@ -532,22 +672,14 @@ function spawnWolf() {
         if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + 25)) continue;
         if (traps.some(t => t.active && Math.hypot(t.x - x, t.y - y) < t.r + 30)) continue;
         wolves.push({
-            x, y, radius: 14,
-            targetingHedgehog: false,
-            state: 'hunt',
-            searchTimer: 0,
-            angle: Math.PI / 2,
-            patienceT: 0
+            x, y, radius: 14, targetingHedgehog: false, state: 'hunt',
+            searchTimer: 0, angle: Math.PI / 2, patienceT: 0
         });
         return;
     }
     wolves.push({
-        x: 100, y: 100, radius: 14,
-        targetingHedgehog: false,
-        state: 'hunt',
-        searchTimer: 0,
-        angle: Math.PI / 2,
-        patienceT: 0
+        x: 100, y: 100, radius: 14, targetingHedgehog: false, state: 'hunt',
+        searchTimer: 0, angle: Math.PI / 2, patienceT: 0
     });
 }
 function rayCircle(ox, oy, dx, dy, cx, cy, r) {
@@ -595,7 +727,7 @@ function killWolf(wolf, byTrap = false) {
             color: Math.random() < 0.5 ? 'rgba(200, 30, 30,' : 'rgba(255, 180, 80,'
         }))
     });
-    if (!byTrap && Math.random() < HEART_DROP_CHANCE) {
+    if (!byTrap && Math.random() < D.heartDropChance) {
         hearts.push({
             x: wolf.x, y: wolf.y,
             type: Math.random() < 0.5 ? 'hedgehog' : 'hunter',
@@ -617,10 +749,16 @@ function registerKill() {
     }
     if (breakTimer <= 0) {
         killsSinceBreak++;
-        if (killsSinceBreak >= BREAK_KILLS) {
+        if (killsSinceBreak >= getBreakKills()) {
             breakTimer = BREAK_DURATION; killsSinceBreak = 0; spawnTimer = 0; breakCount++;
             wolves.forEach(w => { if (w.state !== 'dying') { w.state = 'flee'; w.targetingHedgehog = false; } });
         }
+    }
+    // победа на 25
+    if (!winShown && kills >= WIN_KILLS) {
+        winShown = true;
+        setRecord(kills);
+        showWinOverlay();
     }
 }
 function updateHedgehog(dt) {
@@ -659,19 +797,14 @@ function checkBushEntry() {
 function updateWolves(dt) {
     const hidden = isHedgehogHidden();
     const baseSpeed = getWolfSpeed();
+    const SAFE = D.wolfSafeDist, CIRCLE = D.wolfCircleDist, STRIKE = D.wolfStrikeDist;
+    const STRIKE_SPD = D.wolfStrikeSpeed, PATIENCE = D.wolfPatience;
 
     wolves.forEach(wolf => {
-        if (wolf.state === 'dying') {
-            wolf.deathT += dt;
-            return;
-        }
-
+        if (wolf.state === 'dying') { wolf.deathT += dt; return; }
         if (wolf.patienceT === undefined) wolf.patienceT = 0;
+        const dH = dist(wolf, hedgehog), dHunt = dist(wolf, hunter);
 
-        const dH = dist(wolf, hedgehog);
-        const dHunt = dist(wolf, hunter);
-
-        // === ПЕРЕДЫШКА ===
         if (breakTimer > 0) {
             wolf.state = 'flee'; wolf.targetingHedgehog = false;
             const dxF = wolf.x - hunter.x, dyF = wolf.y - hunter.y;
@@ -685,33 +818,20 @@ function updateWolves(dt) {
             if (dF > FLEE_DESPAWN_DIST) wolf.dead = true;
             return;
         }
-
-        // === КОНТАКТНЫЕ АТАКИ ===
         if (dH < wolf.radius + hedgehog.radius && !hidden) {
-            hedgehog.hp -= 1; damageFlash = 0.4;
-            killWolf(wolf);
-            return;
+            hedgehog.hp -= 1; damageFlash = 0.4; killWolf(wolf); return;
         }
         if (dHunt < wolf.radius + hunter.radius) {
-            hunter.hp -= 1; damageFlash = 0.4;
-            killWolf(wolf);
-            return;
+            hunter.hp -= 1; damageFlash = 0.4; killWolf(wolf); return;
         }
-
-        // === ПОИСК ===
         if (wolf.state === 'search') {
             wolf.searchTimer -= dt;
             if (wolf.searchTimer <= 0) wolf.state = 'hunt';
             return;
         }
-
-        // === 1. ПРИОРИТЕТ ЕЖА ===
         const canChaseHedgehog = !hidden && dH < ATTRACT_RADIUS;
         if (canChaseHedgehog && wolf.state !== 'strike' && wolf.state !== 'commit') {
-            wolf.state = 'chase_hedgehog';
-            wolf.targetingHedgehog = true;
-            wolf.patienceT = 0;
-
+            wolf.state = 'chase_hedgehog'; wolf.targetingHedgehog = true; wolf.patienceT = 0;
             const dx = hedgehog.x - wolf.x, dy = hedgehog.y - wolf.y;
             const dd = Math.hypot(dx, dy);
             if (dd > 0) {
@@ -721,26 +841,18 @@ function updateWolves(dt) {
             }
             resolveObstacles(wolf);
             traps.forEach(trap => {
-                if (trap.active && dist(wolf, trap) < trap.r) {
-                    trap.active = false;
-                    killWolf(wolf, true);
-                }
+                if (trap.active && dist(wolf, trap) < trap.r) { trap.active = false; killWolf(wolf, true); }
             });
             return;
         }
+        if (wolf.state === 'chase_hedgehog') { wolf.state = 'hunt'; wolf.targetingHedgehog = false; }
 
-        if (wolf.state === 'chase_hedgehog') {
-            wolf.state = 'hunt';
-            wolf.targetingHedgehog = false;
-        }
-
-        // === 2. ЛОГИКА ОХОТЫ НА ОХОТНИКА ===
         const angleToWolf = angleFromHunterTo(wolf.x, wolf.y);
         const inCone = angleToWolf < HUNTER_TARGET_CONE;
         const isBehind = angleToWolf > WOLF_STRIKE_ANGLE;
 
-        // --- RETREAT ---
-        if (inCone && dHunt < WOLF_SAFE_DIST && dHunt > WOLF_RETREAT_MIN) {
+        // RETREAT
+        if (inCone && dHunt < SAFE && dHunt > WOLF_RETREAT_MIN) {
             wolf.state = 'retreat';
             const awayX = wolf.x - hunter.x, awayY = wolf.y - hunter.y;
             const awayLen = Math.hypot(awayX, awayY) || 1;
@@ -748,40 +860,32 @@ function updateWolves(dt) {
             const perpX = -ny, perpY = nx;
             const perpDot = Math.cos(hunter.angle) * perpX + Math.sin(hunter.angle) * perpY;
             const sideSign = perpDot > 0 ? -1 : 1;
-
             const rx = nx * 0.7 + perpX * sideSign * 0.7;
             const ry = ny * 0.7 + perpY * sideSign * 0.7;
             const rlen = Math.hypot(rx, ry) || 1;
-
             wolf.x += (rx / rlen) * baseSpeed * dt;
             wolf.y += (ry / rlen) * baseSpeed * dt;
             wolf.angle = Math.atan2(ry, rx);
             resolveObstacles(wolf);
-
             wolf.patienceT += dt;
-            if (wolf.patienceT > WOLF_PATIENCE) {
-                wolf.state = 'commit';
-                wolf.patienceT = 0;
-            }
+            if (wolf.patienceT > PATIENCE) { wolf.state = 'commit'; wolf.patienceT = 0; }
             return;
         }
-
-        // --- STRIKE ---
-        if (isBehind && dHunt < WOLF_STRIKE_DIST) {
+        // STRIKE
+        if (isBehind && dHunt < STRIKE) {
             wolf.state = 'strike';
             const dx = hunter.x - wolf.x, dy = hunter.y - wolf.y;
             const dd = Math.hypot(dx, dy);
             if (dd > 0) {
-                wolf.x += (dx / dd) * baseSpeed * WOLF_STRIKE_SPEED * dt;
-                wolf.y += (dy / dd) * baseSpeed * WOLF_STRIKE_SPEED * dt;
+                wolf.x += (dx / dd) * baseSpeed * STRIKE_SPD * dt;
+                wolf.y += (dy / dd) * baseSpeed * STRIKE_SPD * dt;
                 wolf.angle = Math.atan2(dy, dx);
             }
             resolveObstacles(wolf);
             wolf.patienceT = 0;
             return;
         }
-
-        // --- COMMIT ---
+        // COMMIT
         if (wolf.state === 'commit') {
             const dx = hunter.x - wolf.x, dy = hunter.y - wolf.y;
             const dd = Math.hypot(dx, dy);
@@ -793,19 +897,15 @@ function updateWolves(dt) {
             resolveObstacles(wolf);
             return;
         }
-
-        // --- APPROACH ---
-        if (dHunt > WOLF_SAFE_DIST) {
+        // APPROACH
+        if (dHunt > SAFE) {
             wolf.state = 'approach';
             const jitter = (Math.random() - 0.5) * 2 * WOLF_APPROACH_JITTER;
-            const behind = pointBehindHunter(WOLF_CIRCLE_DIST);
+            const behind = pointBehindHunter(CIRCLE);
             const cosA = Math.cos(jitter), sinA = Math.sin(jitter);
             const vx = behind.x - hunter.x, vy = behind.y - hunter.y;
-            const jx = vx * cosA - vy * sinA;
-            const jy = vx * sinA + vy * cosA;
-            const tx = hunter.x + jx;
-            const ty = hunter.y + jy;
-
+            const jx = vx * cosA - vy * sinA, jy = vx * sinA + vy * cosA;
+            const tx = hunter.x + jx, ty = hunter.y + jy;
             const dx = tx - wolf.x, dy = ty - wolf.y;
             const dd = Math.hypot(dx, dy);
             if (dd > 8) {
@@ -817,8 +917,7 @@ function updateWolves(dt) {
             wolf.patienceT = 0;
             return;
         }
-
-        // --- CIRCLE ---
+        // CIRCLE
         wolf.state = 'circle';
         const dxc = wolf.x - hunter.x, dyc = wolf.y - hunter.y;
         const dc = Math.hypot(dxc, dyc) || 1;
@@ -828,38 +927,23 @@ function updateWolves(dt) {
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
         const dirSign = diff > 0 ? 1 : -1;
-
         const tangentX = -Math.sin(angleAround) * dirSign;
         const tangentY = Math.cos(angleAround) * dirSign;
-        const radialError = dc - WOLF_CIRCLE_DIST;
+        const radialError = dc - CIRCLE;
         const radialX = (dxc / dc) * radialError * 0.02;
         const radialY = (dyc / dc) * radialError * 0.02;
-
-        const mvx = tangentX + radialX;
-        const mvy = tangentY + radialY;
+        const mvx = tangentX + radialX, mvy = tangentY + radialY;
         const mlen = Math.hypot(mvx, mvy) || 1;
-
         wolf.x += (mvx / mlen) * baseSpeed * WOLF_CIRCLE_SPEED * dt;
         wolf.y += (mvy / mlen) * baseSpeed * WOLF_CIRCLE_SPEED * dt;
         wolf.angle = Math.atan2(mvy, mvx);
         resolveObstacles(wolf);
-
-        if (!isBehind) wolf.patienceT += dt;
-        else wolf.patienceT = 0;
-
-        if (wolf.patienceT > WOLF_PATIENCE) {
-            wolf.state = 'commit';
-            wolf.patienceT = 0;
-        }
-
+        if (!isBehind) wolf.patienceT += dt; else wolf.patienceT = 0;
+        if (wolf.patienceT > PATIENCE) { wolf.state = 'commit'; wolf.patienceT = 0; }
         traps.forEach(trap => {
-            if (trap.active && dist(wolf, trap) < trap.r) {
-                trap.active = false;
-                killWolf(wolf, true);
-            }
+            if (trap.active && dist(wolf, trap) < trap.r) { trap.active = false; killWolf(wolf, true); }
         });
     });
-
     separateWolves();
     wolves = wolves.filter(w => {
         if (w.dead) return false;
@@ -869,20 +953,12 @@ function updateWolves(dt) {
 }
 
 function updateHearts(dt) {
-    hearts.forEach(h => {
-        h.life -= dt;
-        h.bobPhase += dt * 3;
-    });
+    hearts.forEach(h => { h.life -= dt; h.bobPhase += dt * 3; });
     for (const h of hearts) {
         if (h.life <= 0) continue;
         if (dist(h, hedgehog) < HEART_PICKUP_R + hedgehog.radius) {
-            if (h.type === 'hedgehog' && hedgehog.hp < 3) {
-                hedgehog.hp = Math.min(3, hedgehog.hp + 1);
-                h.life = -1;
-            } else if (h.type === 'hunter' && hunter.hp < 3) {
-                hunter.hp = Math.min(3, hunter.hp + 1);
-                h.life = -1;
-            }
+            if (h.type === 'hedgehog' && hedgehog.hp < 3) { hedgehog.hp = Math.min(3, hedgehog.hp + 1); h.life = -1; }
+            else if (h.type === 'hunter' && hunter.hp < 3) { hunter.hp = Math.min(3, hunter.hp + 1); h.life = -1; }
         }
     }
     hearts = hearts.filter(h => h.life > 0);
@@ -892,10 +968,7 @@ function updateDeathFx(dt) {
     deathFx.forEach(fx => {
         fx.ttl -= dt;
         fx.parts.forEach(p => {
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
-            p.vy += 200 * dt;
-            p.life -= dt;
+            p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 200 * dt; p.life -= dt;
         });
     });
     deathFx = deathFx.filter(fx => fx.ttl > 0);
@@ -907,14 +980,9 @@ function fireBullet(target) {
     const d = Math.hypot(dx, dy) || 1;
     const nx = dx / d, ny = dy / d;
     bullets.push({
-        x: hunter.x + nx * 30,
-        y: hunter.y + ny * 30,
-        vx: nx * BULLET_SPEED,
-        vy: ny * BULLET_SPEED,
-        target: target,
-        trail: [],
-        life: BULLET_LIFE,
-        dead: false
+        x: hunter.x + nx * 30, y: hunter.y + ny * 30,
+        vx: nx * BULLET_SPEED, vy: ny * BULLET_SPEED,
+        target, trail: [], life: BULLET_LIFE, dead: false
     });
 }
 function updateBullets(dt) {
@@ -922,9 +990,7 @@ function updateBullets(dt) {
         if (b.dead) return;
         b.trail.push({ x: b.x, y: b.y });
         if (b.trail.length > 8) b.trail.shift();
-        b.x += b.vx * dt;
-        b.y += b.vy * dt;
-        b.life -= dt;
+        b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
         if (b.target && !b.target.dead && b.target.state !== 'dying') {
             const d = Math.hypot(b.target.x - b.x, b.target.y - b.y);
             if (d < b.target.radius + 12) {
@@ -936,13 +1002,10 @@ function updateBullets(dt) {
         for (const o of obstacles) {
             if (Math.hypot(b.x - o.x, b.y - o.y) < o.r) {
                 sparks.push({ x: b.x, y: b.y, ttl: 0.5, maxTtl: 0.5 });
-                b.dead = true;
-                break;
+                b.dead = true; break;
             }
         }
-        if (b.life <= 0 || b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H) {
-            b.dead = true;
-        }
+        if (b.life <= 0 || b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H) b.dead = true;
     });
     bullets = bullets.filter(b => !b.dead);
 }
@@ -958,38 +1021,30 @@ function updateFireParticles(dt) {
             y: campfire.y - 6 + (Math.random() - 0.5) * 6,
             vx: Math.cos(angle) * speed + (Math.random() - 0.5) * 12,
             vy: Math.sin(angle) * speed,
-            life: 0.6 + Math.random() * 0.6,
-            maxLife: 0,
-            size: 1.5 + Math.random() * 2.2,
-            hue: 20 + Math.random() * 30
+            life: 0.6 + Math.random() * 0.6, maxLife: 0,
+            size: 1.5 + Math.random() * 2.2, hue: 20 + Math.random() * 30
         });
     }
     fireParticles.forEach(p => {
         if (p.maxLife === 0) p.maxLife = p.life;
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
-        p.vx *= (1 - dt * 1.5);
-        p.vy -= 15 * dt;
-        p.life -= dt;
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        p.vx *= (1 - dt * 1.5); p.vy -= 15 * dt; p.life -= dt;
     });
     fireParticles = fireParticles.filter(p => p.life > 0);
 }
 
-// ===== ОХОТНИК: КОНУС + ОГРАНИЧЕНИЕ ПОВОРОТА =====
+// ===== ОХОТНИК =====
 function updateHunter(dt) {
     if (reloadTimer > 0) { reloadTimer -= dt; if (reloadTimer <= 0) { ammo = 1; reloadTimer = 0; } }
-
     const prevTarget = hunter.target;
     hunter.target = null;
-
     if (wolves.length > 0) {
         let best = null, bestScore = Infinity;
         wolves.forEach(w => {
             if (w.state === 'dying') return;
             const d = dist(w, hunter);
-            if (d > HUNTER_RANGE) return;
+            if (d > D.hunterRange) return;
             if (angleFromHunterTo(w.x, w.y) > HUNTER_TARGET_CONE) return;
-
             let score;
             if (w.state === 'flee') score = d * 0.9;
             else if (w.state === 'search') score = d * 0.4;
@@ -1002,38 +1057,29 @@ function updateHunter(dt) {
         });
         hunter.target = best;
     }
-
-    if (hunter.target !== prevTarget) {
-        hunter.turnDelay = HUNTER_TURN_DELAY;
-    }
+    if (hunter.target !== prevTarget) hunter.turnDelay = D.hunterTurnDelay;
     if (hunter.turnDelay > 0) hunter.turnDelay -= dt;
-
     let aimAngle;
     if (hunter.target && !hunter.target.dead && hunter.target.state !== 'dying') {
         aimAngle = Math.atan2(hunter.target.y - hunter.y, hunter.target.x - hunter.x);
     } else {
         aimAngle = Math.atan2(hedgehog.y - hunter.y, hedgehog.x - hunter.x);
     }
-
     if (hunter.turnDelay > 0) {
         let diff = aimAngle - hunter.angle;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
-        const maxStep = HUNTER_TURN_SPEED * dt;
+        const maxStep = D.hunterTurnSpeed * dt;
         if (Math.abs(diff) > maxStep) diff = Math.sign(diff) * maxStep;
         hunter.angle += diff;
     } else {
         hunter.angle = aimAngle;
     }
-
     if (hunter.target && ammo > 0 && !hunter.target.dead) {
         if (angleFromHunterTo(hunter.target.x, hunter.target.y) < HUNTER_TARGET_CONE * 0.8) {
             const block = getLOSBlock(hunter, hunter.target);
-            if (block) {
-                sparks.push({ x: block.x, y: block.y, ttl: 0.5, maxTtl: 0.5 });
-            } else {
-                fireBullet(hunter.target);
-            }
+            if (block) sparks.push({ x: block.x, y: block.y, ttl: 0.5, maxTtl: 0.5 });
+            else fireBullet(hunter.target);
             ammo = 0; reloadTimer = RELOAD_TIME;
         }
     }
@@ -1053,86 +1099,61 @@ function updateCamera(dt) {
 function draw() {
     ctx.fillStyle = '#050a07';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
-
     const ts = SPRITES.grass.size;
     for (let x = 0; x < WORLD_W; x += ts) {
-        for (let y = 0; y < WORLD_H; y += ts) {
-            drawSprite('grass', x + ts/2, y + ts/2, ts);
-        }
+        for (let y = 0; y < WORLD_H; y += ts) drawSprite('grass', x + ts/2, y + ts/2, ts);
     }
-
     bushes.forEach(b => drawSprite('bush', b.x, b.y, b.r * 2.3));
-
     traps.forEach(trap => {
         drawSprite('trap', trap.x, trap.y, trap.r * 2.1);
         if (!trap.active) {
-            ctx.beginPath();
-            ctx.arc(trap.x, trap.y, trap.r, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(50, 35, 18, 0.55)';
-            ctx.fill();
+            ctx.beginPath(); ctx.arc(trap.x, trap.y, trap.r, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(50, 35, 18, 0.55)'; ctx.fill();
         }
         ctx.fillStyle = trap.active ? '#d4b070' : '#b09060';
-        ctx.font = 'bold 13px monospace';
-        ctx.textAlign = 'center';
+        ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
         ctx.fillText(trap.active ? 'готово' : (Math.min(TRAP_RELOAD_KILLS, killsSinceReload) + '/' + TRAP_RELOAD_KILLS), trap.x, trap.y + 5);
     });
-
     obstacles.forEach(o => {
         drawShadow(o.x, o.y + o.r * 0.4, o.r * 1.1);
         if (o.type === 'tree') drawSprite('tree', o.x, o.y, o.r * 2.9);
         else drawSprite('rock', o.x, o.y, o.r * 2.1);
     });
-
     drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
-
     ctx.beginPath();
     ctx.arc(hedgehog.x, hedgehog.y, ATTRACT_RADIUS, 0, Math.PI * 2);
-    ctx.setLineDash([6, 8]);
-    ctx.strokeStyle = 'rgba(210, 105, 30, 0.12)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.setLineDash([]);
-
+    ctx.setLineDash([6, 8]); ctx.strokeStyle = 'rgba(210, 105, 30, 0.12)';
+    ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
     ctx.restore();
 
-    // ===== ТЬМА =====
-    const cx = (campfire.x - cam.x) * ZOOM;
-    const cy = (campfire.y - cam.y) * ZOOM;
-    const litR = 200 * ZOOM;
-    const darkR = 550 * ZOOM;
-
+    // тьма
+    const cx = (campfire.x - cam.x) * ZOOM, cy = (campfire.y - cam.y) * ZOOM;
+    const litR = 200 * ZOOM, darkR = 550 * ZOOM;
     const darkGrad = ctx.createRadialGradient(cx, cy, litR, cx, cy, darkR);
     darkGrad.addColorStop(0, 'rgba(5, 10, 25, 0)');
     darkGrad.addColorStop(0.4, 'rgba(4, 8, 20, 0.55)');
     darkGrad.addColorStop(0.75, 'rgba(2, 4, 12, 0.9)');
     darkGrad.addColorStop(1, 'rgba(0, 0, 0, 1)');
-    ctx.fillStyle = darkGrad;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = darkGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const hx = (hedgehog.x - cam.x) * ZOOM;
-    const hy = (hedgehog.y - cam.y) * ZOOM;
+    const hx = (hedgehog.x - cam.x) * ZOOM, hy = (hedgehog.y - cam.y) * ZOOM;
     const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300 * (ZOOM / 2.2));
     hGrad.addColorStop(0, 'rgba(255, 220, 150, 0.32)');
     hGrad.addColorStop(0.5, 'rgba(255, 220, 150, 0.12)');
     hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
-    ctx.fillStyle = hGrad;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = hGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
-
     wolves.forEach(w => {
         if (w.state === 'dying') {
             const t = w.deathT / DEATH_DURATION;
-            const alpha = 1 - t;
-            const scale = 1 - t * 0.6;
             drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF + w.spin * t,
-                              SPRITES.wolf.size * scale, alpha);
+                              SPRITES.wolf.size * (1 - t * 0.6), 1 - t);
             return;
         }
         const visible = isWolfVisible(w);
@@ -1145,37 +1166,22 @@ function draw() {
             else if (w.state === 'chase_hedgehog') tint = 'rgba(220, 120, 40, 0.32)';
             else if (w.state === 'retreat' || w.state === 'circle' || w.state === 'approach') tint = 'rgba(200, 180, 60, 0.25)';
             else tint = 'rgba(200, 30, 30, 0.28)';
-            ctx.beginPath();
-            ctx.arc(w.x, w.y, 26, 0, Math.PI * 2);
-            ctx.fillStyle = tint;
-            ctx.fill();
+            ctx.beginPath(); ctx.arc(w.x, w.y, 26, 0, Math.PI * 2); ctx.fillStyle = tint; ctx.fill();
             drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
-            // маркеры состояний
-            if (w.state === 'search') {
-                ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace';
-                ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 34);
-            } else if (w.state === 'flee') {
-                ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace';
-                ctx.textAlign = 'center'; ctx.fillText('»', w.x, w.y - 34);
-            } else if (w.state === 'strike' || w.state === 'commit') {
-                ctx.fillStyle = '#ff4444'; ctx.font = 'bold 20px monospace';
-                ctx.textAlign = 'center'; ctx.fillText('!', w.x, w.y - 34);
-            }
+            if (w.state === 'search') { ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 34); }
+            else if (w.state === 'flee') { ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.fillText('»', w.x, w.y - 34); }
+            else if (w.state === 'strike' || w.state === 'commit') { ctx.fillStyle = '#ff4444'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.fillText('!', w.x, w.y - 34); }
         } else {
             if (w.state !== 'flee') drawWolfEyes(w);
         }
     });
-
-    // ===== ПЕРСОНАЖИ =====
     const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
     const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4.5 * pulse);
     fg.addColorStop(0, 'rgba(255, 200, 50, 0.55)');
     fg.addColorStop(0.4, 'rgba(255, 120, 20, 0.22)');
     fg.addColorStop(1, 'rgba(255, 80, 0, 0)');
     ctx.fillStyle = fg;
-    ctx.beginPath();
-    ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2); ctx.fill();
 
     hearts.forEach(h => {
         const bob = Math.sin(h.bobPhase) * 4;
@@ -1183,55 +1189,39 @@ function draw() {
         const color = h.type === 'hedgehog' ? '#ff5577' : '#ffcc66';
         const outline = h.type === 'hedgehog' ? '#ffdde3' : '#fff1c8';
         ctx.fillStyle = h.type === 'hedgehog' ? 'rgba(255, 85, 119, 0.25)' : 'rgba(255, 204, 102, 0.25)';
-        ctx.beginPath();
-        ctx.arc(h.x, h.y + bob, 18, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(h.x, h.y + bob, 18, 0, Math.PI * 2); ctx.fill();
         drawHeart(h.x, h.y + bob, 9, color, outline, alpha);
     });
-
     deathFx.forEach(fx => {
         fx.parts.forEach(p => {
             const a = Math.max(0, p.life / p.maxLife);
             ctx.fillStyle = p.color + (a * 0.9) + ')';
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size * a, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.arc(p.x, p.y, p.size * a, 0, Math.PI * 2); ctx.fill();
         });
     });
-
     fireParticles.forEach(p => {
         const a = Math.max(0, p.life / p.maxLife);
         ctx.fillStyle = `hsla(${p.hue}, 100%, 60%, ${a * 0.9})`;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * a, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * a, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = `hsla(${p.hue}, 100%, 55%, ${a * 0.25})`;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * a * 2.5, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * a * 2.5, 0, Math.PI * 2); ctx.fill();
     });
-
     drawShadow(hunter.x, hunter.y + 12, 22);
     drawRotatedSprite('hunter', hunter.x, hunter.y, hunter.angle + ROT_OFFSET_HUNTER, SPRITES.hunter.size);
     ctx.save();
-    ctx.translate(hunter.x, hunter.y);
-    ctx.rotate(hunter.angle);
-    ctx.fillStyle = '#3a3a3a';
-    ctx.fillRect(16, -3, 28, 6);
-    ctx.fillStyle = '#5a5a5a';
-    ctx.fillRect(40, -4, 8, 8);
+    ctx.translate(hunter.x, hunter.y); ctx.rotate(hunter.angle);
+    ctx.fillStyle = '#3a3a3a'; ctx.fillRect(16, -3, 28, 6);
+    ctx.fillStyle = '#5a5a5a'; ctx.fillRect(40, -4, 8, 8);
     ctx.restore();
 
     if (hunter.target && !hunter.target.dead && hunter.target.state !== 'dying') {
         const canFire = ammo > 0;
         const block = getLOSBlock(hunter, hunter.target);
         ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(hunter.x, hunter.y);
+        ctx.beginPath(); ctx.moveTo(hunter.x, hunter.y);
         if (block) {
             ctx.lineTo(block.x, block.y);
-            ctx.setLineDash([6, 8]);
-            ctx.strokeStyle = 'rgba(160, 160, 160, 0.55)';
+            ctx.setLineDash([6, 8]); ctx.strokeStyle = 'rgba(160, 160, 160, 0.55)';
         } else {
             ctx.lineTo(hunter.target.x, hunter.target.y);
             ctx.setLineDash([6, 8]);
@@ -1260,12 +1250,9 @@ function draw() {
         ctx.restore();
     }
     if (reloadTimer > 0) {
-        ctx.fillStyle = '#ff6666';
-        ctx.font = 'bold 12px monospace';
-        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ff6666'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
         ctx.fillText('⏳ ' + reloadTimer.toFixed(1), hunter.x, hunter.y - 46);
     }
-
     bullets.forEach(b => {
         if (b.trail.length > 1) {
             for (let i = 0; i < b.trail.length - 1; i++) {
@@ -1273,10 +1260,7 @@ function draw() {
                 const a = (i / b.trail.length) * 0.7;
                 ctx.strokeStyle = `rgba(255, 230, 120, ${a})`;
                 ctx.lineWidth = 1 + (i / b.trail.length) * 2;
-                ctx.beginPath();
-                ctx.moveTo(t.x, t.y);
-                ctx.lineTo(t2.x, t2.y);
-                ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(t.x, t.y); ctx.lineTo(t2.x, t2.y); ctx.stroke();
             }
         }
         ctx.fillStyle = 'rgba(255, 250, 180, 0.95)';
@@ -1284,12 +1268,10 @@ function draw() {
         ctx.fillStyle = 'rgba(255, 180, 60, 0.5)';
         ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
     });
-
     drawShadow(hedgehog.x, hedgehog.y + 8, 16);
     ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
     drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
     ctx.globalAlpha = 1;
-
     sparks.forEach(s => {
         const a = s.ttl / s.maxTtl;
         ctx.fillStyle = 'rgba(255, 220, 100, ' + a + ')';
@@ -1297,18 +1279,13 @@ function draw() {
         ctx.fillStyle = 'rgba(255, 120, 40, ' + (a * 0.7) + ')';
         ctx.beginPath(); ctx.arc(s.x, s.y, 2 + (1 - a) * 4, 0, Math.PI * 2); ctx.fill();
     });
-
     if (mouseScreen && gameState === 'playing') {
-        const ttx = mouseScreen.x / ZOOM + cam.x;
-        const tty = mouseScreen.y / ZOOM + cam.y;
+        const ttx = mouseScreen.x / ZOOM + cam.x, tty = mouseScreen.y / ZOOM + cam.y;
         if (Math.hypot(ttx - hedgehog.x, tty - hedgehog.y) > 8) {
-            ctx.beginPath();
-            ctx.arc(ttx, tty, 4, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(255, 200, 100, 0.7)';
-            ctx.lineWidth = 1.5; ctx.stroke();
+            ctx.beginPath(); ctx.arc(ttx, tty, 4, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 200, 100, 0.7)'; ctx.lineWidth = 1.5; ctx.stroke();
         }
     }
-
     const time = performance.now() / 1000;
     fireflies.forEach(f => {
         const fx = f.x + Math.sin(time * f.speed + f.phase) * 25;
@@ -1319,7 +1296,6 @@ function draw() {
         ctx.fillStyle = `rgba(255, 240, 150, ${alpha})`;
         ctx.beginPath(); ctx.arc(fx, fy, f.radius, 0, Math.PI * 2); ctx.fill();
     });
-
     ctx.restore();
 
     if (damageFlash > 0) {
@@ -1327,7 +1303,6 @@ function draw() {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
-    // ===== HUD =====
     document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
     document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
     document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
@@ -1337,23 +1312,6 @@ function draw() {
         breakStatus.style.display = 'block';
         breakTimeEl.textContent = breakTimer.toFixed(1);
     } else breakStatus.style.display = 'none';
-}
-
-function drawHeart(cx, cy, size, fill, outline, alpha = 1) {
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.beginPath();
-    const s = size;
-    ctx.moveTo(cx, cy + s * 0.7);
-    ctx.bezierCurveTo(cx + s * 1.3, cy - s * 0.2, cx + s * 0.6, cy - s * 1.1, cx, cy - s * 0.4);
-    ctx.bezierCurveTo(cx - s * 0.6, cy - s * 1.1, cx - s * 1.3, cy - s * 0.2, cx, cy + s * 0.7);
-    ctx.closePath();
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.strokeStyle = outline;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.restore();
 }
 
 function gameLoop(t) {
@@ -1389,6 +1347,9 @@ function gameLoop(t) {
     requestAnimationFrame(gameLoop);
 }
 
+// ===== ИНИЦИАЛИЗАЦИЯ =====
+D = DIFFICULTIES.normal;
+diffLabelEl.textContent = '—';
 generateWorld();
 requestAnimationFrame(gameLoop);
 </script>
