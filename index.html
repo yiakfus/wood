@@ -120,7 +120,7 @@ const SPRITES = {
     rock:     { path: 'https://yiakfus.github.io/wood/asset/sprites/rock.png',     size: 56,  loaded: false },
     bush:     { path: 'https://yiakfus.github.io/wood/asset/sprites/bush.png',     size: 140, loaded: false },
     trap:     { path: 'https://yiakfus.github.io/wood/asset/sprites/trap.png',     size: 96,  loaded: false },
-    grass:    { path: 'https://yiakfus.github.io/wood/asset/sprites/grass03.png',      size: 96,  loaded: false },
+    grass:    { path: 'https://yiakfus.github.io/wood/asset/sprites/grass.png',      size: 96,  loaded: false },
 };
 for (const key in SPRITES) {
     const s = SPRITES[key];
@@ -160,7 +160,7 @@ let mouseScreen = null;
 let lastTime = performance.now();
 let damageFlash = 0;
 
-// ===== СВЕТЛЯЧКИ (атмосфера) =====
+// ===== СВЕТЛЯЧКИ =====
 const fireflies = [];
 for (let i = 0; i < 45; i++) {
     fireflies.push({
@@ -558,7 +558,7 @@ function draw() {
         }
     }
 
-    // 2) КУСТЫ (под всеми)
+    // 2) КУСТЫ
     bushes.forEach(b => drawSprite('bush', b.x, b.y, b.r * 2.3));
 
     // 3) ЛОВУШКИ
@@ -576,14 +576,14 @@ function draw() {
         ctx.fillText(trap.active ? 'готово' : (Math.min(TRAP_RELOAD_KILLS, killsSinceReload) + '/' + TRAP_RELOAD_KILLS), trap.x, trap.y + 5);
     });
 
-    // 4) ДЕРЕВЬЯ И КАМНИ (со тенями)
+    // 4) ДЕРЕВЬЯ И КАМНИ
     obstacles.forEach(o => {
         drawShadow(o.x, o.y + o.r * 0.4, o.r * 1.1);
         if (o.type === 'tree') drawSprite('tree', o.x, o.y, o.r * 2.9);
         else drawSprite('rock', o.x, o.y, o.r * 2.1);
     });
 
-    // 5) КОСТЁР — glow + спрайт
+    // 5) КОСТЁР
     const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
     const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4 * pulse);
     fg.addColorStop(0, 'rgba(255, 200, 50, 0.75)');
@@ -595,7 +595,7 @@ function draw() {
     ctx.fill();
     drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
 
-    // 6) РАДИУС ПРИМАНИВАНИЯ (едва заметный)
+    // 6) РАДИУС ПРИМАНИВАНИЯ
     ctx.beginPath();
     ctx.arc(hedgehog.x, hedgehog.y, ATTRACT_RADIUS, 0, Math.PI * 2);
     ctx.setLineDash([6, 8]);
@@ -604,10 +604,9 @@ function draw() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // 7) ОХОТНИК
+    // 7) ОХОТНИК + ствол + прицел
     drawShadow(hunter.x, hunter.y + 12, 22);
     drawSprite('hunter', hunter.x, hunter.y, SPRITES.hunter.size);
-    // Ствол
     const aimTarget = (hunter.target && !hunter.target.dead) ? hunter.target : hedgehog;
     const angle = Math.atan2(aimTarget.y - hunter.y, aimTarget.x - hunter.x);
     ctx.save();
@@ -618,7 +617,6 @@ function draw() {
     ctx.fillStyle = '#5a5a5a';
     ctx.fillRect(36, -4, 8, 8);
     ctx.restore();
-    // Прицел
     if (hunter.target && !hunter.target.dead) {
         const canFire = ammo > 0;
         const block = getLOSBlock(hunter, hunter.target);
@@ -667,7 +665,6 @@ function draw() {
     wolves.forEach(w => {
         drawShadow(w.x, w.y + 8, 18);
         drawSprite('wolf', w.x, w.y, SPRITES.wolf.size);
-        // Цветовой статус — поверх спрайта тонкий ореол
         let tint = null;
         if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.35)';
         else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.35)';
@@ -677,7 +674,6 @@ function draw() {
         ctx.arc(w.x, w.y, 24, 0, Math.PI * 2);
         ctx.fillStyle = tint;
         ctx.fill();
-        // Статусные значки
         if (w.state === 'search') {
             ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace';
             ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 30);
@@ -714,7 +710,7 @@ function draw() {
         }
     }
 
-    // 12) СВЕТЛЯЧКИ (атмосфера) — в мировых координатах
+    // 12) СВЕТЛЯЧКИ
     const time = performance.now() / 1000;
     fireflies.forEach(f => {
         const fx = f.x + Math.sin(time * f.speed + f.phase) * 25;
@@ -728,12 +724,10 @@ function draw() {
 
     ctx.restore();
 
-    // ===== АТМОСФЕРНЫЙ СЛОЙ (экранные координаты) =====
-    // Ночной синеватый оттенок
+    // ===== АТМОСФЕРНЫЙ СЛОЙ =====
     ctx.fillStyle = 'rgba(15, 25, 55, 0.28)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Виньетка по краям
     const vig = ctx.createRadialGradient(
         canvas.width/2, canvas.height/2, Math.min(canvas.width, canvas.height) * 0.35,
         canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height) * 0.75
@@ -743,7 +737,6 @@ function draw() {
     ctx.fillStyle = vig;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Красная вспышка при получении урона
     if (damageFlash > 0) {
         ctx.fillStyle = `rgba(180, 20, 20, ${damageFlash * 0.5})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
