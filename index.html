@@ -59,7 +59,7 @@ canvas { display: block; background: #050a07; touch-action: none; }
 <div id="hud">
     <div>❤️ Ёж <b id="hedgehogHP">3</b> · 🎯 Охотник <b id="hunterHP">3</b></div>
     <div>⏳ <b id="reloadStatus">Готов</b></div>
-    <div>🔥 <b id="difficulty">0</b> · 💀 <b id="kills">0</b></div>
+    <div>🔥 <b id="difficulty">0</b> · 🌊 <b id="waveNum">0</b> · 💀 <b id="kills">0</b></div>
     <div id="break-status">⏸ Передышка <b id="breakTime">10.0</b>с</div>
     <div id="buttons">
         <button id="pause-btn">⏸ Пауза</button>
@@ -85,7 +85,7 @@ const difficultyEl = document.getElementById('difficulty');
 
 const WORLD_W = 2400;
 const WORLD_H = 1600;
-const ZOOM = 4;  // ← фиксированный зум
+let ZOOM = 1.75;
 
 const RELOAD_TIME       = 10;
 const SPAWN_INTERVAL    = 8;
@@ -107,12 +107,9 @@ const MIN_SPAWN_INTERVAL     = 4;
 const DIFFICULTY_SPAWN_STEP  = 0.5;
 const DIFFICULTY_SPEED_STEP  = 5;
 
-// ===== ПУЛИ =====
-const BULLET_SPEED = 900; // world-unit/сек
-
 // ===== ВИДИМОСТЬ ВОЛКОВ (world-unit) =====
-const VISIBLE_NEAR_FIRE     = 260;
-const VISIBLE_NEAR_HEDGEHOG = 220;
+const VISIBLE_NEAR_FIRE     = 260;  // радиус видимости от костра
+const VISIBLE_NEAR_HEDGEHOG = 220;  // радиус «фонарика» ежа
 
 // ===== ПОВОРОТЫ СПРАЙТОВ =====
 const ROT_OFFSET_HEDGEHOG = -Math.PI / 2;
@@ -153,11 +150,10 @@ const traps   = [
 
 let gameState = 'menu';
 let wolves = [];
-let bullets = [];            // ← летящие пули
-let fireParticles = [];      // ← частицы костра
 let ammo = 1;
 let reloadTimer = 0;
 let spawnTimer = 0;
+let waveNum = 0;
 let kills = 0;
 let killsSinceReload = 0;
 let killsSinceBreak = 0;
@@ -201,6 +197,7 @@ function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
 function randRange(a, b) { return a + Math.random() * (b - a); }
 function isHedgehogHidden() { return bushes.some(b => dist(hedgehog, b) < b.r); }
 
+// ===== ВИДИМОСТЬ ВОЛКА =====
 function isWolfVisible(w) {
     return dist(w, campfire) < VISIBLE_NEAR_FIRE ||
            dist(w, hedgehog) < VISIBLE_NEAR_HEDGEHOG;
@@ -242,6 +239,7 @@ function drawShadow(x, y, radius, opacity = 0.4) {
     ctx.fill();
 }
 
+// ===== ГЛАЗА ВОЛКА В ТЕМНОТЕ =====
 function drawWolfEyes(w) {
     const eyeDist = 10;
     const eyeSpread = 6;
@@ -249,6 +247,7 @@ function drawWolfEyes(w) {
     for (const sign of [1, -1]) {
         const ex = w.x + Math.cos(w.angle) * eyeDist + Math.cos(perp) * eyeSpread * sign;
         const ey = w.y + Math.sin(w.angle) * eyeDist + Math.sin(perp) * eyeSpread * sign;
+        // Свечение вокруг глаза
         ctx.beginPath();
         ctx.arc(ex, ey, 7, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(255, 40, 20, 0.22)';
@@ -257,6 +256,7 @@ function drawWolfEyes(w) {
         ctx.arc(ex, ey, 4, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(255, 60, 30, 0.5)';
         ctx.fill();
+        // Яркий центр
         ctx.beginPath();
         ctx.arc(ex, ey, 2.2, 0, Math.PI * 2);
         ctx.fillStyle = '#ff3322';
@@ -265,12 +265,17 @@ function drawWolfEyes(w) {
 }
 
 // ===== CANVAS =====
+function computeZoom() {
+    const raw = canvas.width / 800;
+    return Math.min(1.75, Math.max(1.3, raw));
+}
 function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
     canvas.width  = Math.floor(window.innerWidth  * dpr);
     canvas.height = Math.floor(window.innerHeight * dpr);
     canvas.style.width  = window.innerWidth  + 'px';
     canvas.style.height = window.innerHeight + 'px';
+    ZOOM = computeZoom();
     ctx.imageSmoothingEnabled = false;
 }
 window.addEventListener('resize', resizeCanvas);
@@ -308,6 +313,7 @@ function generateWorld() {
             break;
         }
     }
+
     for (let i = 0; i < 6; i++) {
         for (let tries = 0; tries < 100; tries++) {
             const angle = Math.random() * Math.PI * 2;
@@ -377,10 +383,10 @@ function startGame() {
     resizeCanvas();
     hedgehog.x = 1200; hedgehog.y = 980; hedgehog.hp = 3; hedgehog.angle = Math.PI / 2;
     hunter.hp = 3; hunter.target = null; hunter.angle = Math.PI / 2;
-    wolves = []; sparks = []; bullets = []; fireParticles = []; damageFlash = 0;
+    wolves = []; sparks = []; damageFlash = 0;
     ammo = 1; reloadTimer = 0;
     spawnTimer = SPAWN_INTERVAL - INITIAL_DELAY;
-    kills = 0; killsSinceReload = 0; killsSinceBreak = 0; breakTimer = 0;
+    waveNum = 0; kills = 0; killsSinceReload = 0; killsSinceBreak = 0; breakTimer = 0;
     breakCount = 0; hedgehogWasHidden = false; mouseScreen = null;
     generateWorld();
     traps.forEach(t => { t.active = true; });
@@ -393,7 +399,7 @@ function startGame() {
 function endGame() {
     gameState = 'over';
     ovTitle.textContent = 'Игра окончена';
-    ovText.textContent = 'Убито: ' + kills + ' · Уровень: ' + breakCount;
+    ovText.textContent = 'Волн: ' + waveNum + ' · Убито: ' + kills + ' · Уровень: ' + breakCount;
     ovBtn.textContent = 'ЗАНОВО';
     overlay.classList.remove('hidden');
 }
@@ -576,6 +582,318 @@ function updateWolves(dt) {
     separateWolves();
     wolves = wolves.filter(w => !w.dead);
 }
+function updateHunter(dt) {
+    if (reloadTimer > 0) { reloadTimer -= dt; if (reloadTimer <= 0) { ammo = 1; reloadTimer = 0; } }
+    hunter.target = null;
+    if (wolves.length > 0) {
+        let best = null, bestScore = Infinity;
+        wolves.forEach(w => {
+            const d = dist(w, hunter);
+            if (d > HUNTER_RANGE) return;
+            let score;
+            if (w.state === 'flee') score = d * 0.9;
+            else if (w.state === 'search') score = d * 0.4;
+            else if (w.targetingHedgehog) score = d;
+            else score = d * 0.35;
+            if (score < bestScore) { bestScore = score; best = w; }
+        });
+        hunter.target = best;
+        const aim = (best && !best.dead) ? best : hedgehog;
+        hunter.angle = Math.atan2(aim.y - hunter.y, aim.x - hunter.x);
+        if (best && ammo > 0) {
+            const block = getLOSBlock(hunter, best);
+            if (block) sparks.push({ x: block.x, y: block.y, ttl: 0.5, maxTtl: 0.5 });
+            else { best.dead = true; registerKill(); }
+            ammo = 0; reloadTimer = RELOAD_TIME;
+        }
+    } else {
+        hunter.angle = Math.atan2(hedgehog.y - hunter.y, hedgehog.x - hunter.x);
+    }
+}
+function updateSparks(dt) { sparks.forEach(s => s.ttl -= dt); sparks = sparks.filter(s => s.ttl > 0); }
+function updateCamera(dt) {
+    const vw = viewW(), vh = viewH();
+    let tx, ty;
+    if (vw >= WORLD_W) tx = (WORLD_W - vw) / 2; else tx = clamp(hedgehog.x - vw / 2, 0, WORLD_W - vw);
+    if (vh >= WORLD_H) ty = (WORLD_H - vh) / 2; else ty = clamp(hedgehog.y - vh / 2, 0, WORLD_H - vh);
+    const lerp = Math.min(1, dt * 8);
+    cam.x += (tx - cam.x) * lerp;
+    cam.y += (ty - cam.y) * lerp;
+}
 
-// ===== ПУЛИ: создание и апдейт =====
-function fire
+// ===== ОТРИСОВКА =====
+function draw() {
+    ctx.fillStyle = '#050a07';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // ============ МИР ДО ТЬМЫ ============
+    ctx.save();
+    ctx.scale(ZOOM, ZOOM);
+    ctx.translate(-cam.x, -cam.y);
+
+    const ts = SPRITES.grass.size;
+    for (let x = 0; x < WORLD_W; x += ts) {
+        for (let y = 0; y < WORLD_H; y += ts) {
+            drawSprite('grass', x + ts/2, y + ts/2, ts);
+        }
+    }
+
+    bushes.forEach(b => drawSprite('bush', b.x, b.y, b.r * 2.3));
+
+    traps.forEach(trap => {
+        drawSprite('trap', trap.x, trap.y, trap.r * 2.1);
+        if (!trap.active) {
+            ctx.beginPath();
+            ctx.arc(trap.x, trap.y, trap.r, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(50, 35, 18, 0.55)';
+            ctx.fill();
+        }
+        ctx.fillStyle = trap.active ? '#d4b070' : '#b09060';
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(trap.active ? 'готово' : (Math.min(TRAP_RELOAD_KILLS, killsSinceReload) + '/' + TRAP_RELOAD_KILLS), trap.x, trap.y + 5);
+    });
+
+    obstacles.forEach(o => {
+        drawShadow(o.x, o.y + o.r * 0.4, o.r * 1.1);
+        if (o.type === 'tree') drawSprite('tree', o.x, o.y, o.r * 2.9);
+        else drawSprite('rock', o.x, o.y, o.r * 2.1);
+    });
+
+    drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
+
+    ctx.beginPath();
+    ctx.arc(hedgehog.x, hedgehog.y, ATTRACT_RADIUS, 0, Math.PI * 2);
+    ctx.setLineDash([6, 8]);
+    ctx.strokeStyle = 'rgba(210, 105, 30, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.restore();
+
+    // ============ СЛОЙ ТЬМЫ ============
+    const cx = (campfire.x - cam.x) * ZOOM;
+    const cy = (campfire.y - cam.y) * ZOOM;
+    const litR = 200 * ZOOM;
+    const darkR = 550 * ZOOM;
+
+    const darkGrad = ctx.createRadialGradient(cx, cy, litR, cx, cy, darkR);
+    darkGrad.addColorStop(0, 'rgba(5, 10, 25, 0)');
+    darkGrad.addColorStop(0.4, 'rgba(4, 8, 20, 0.55)');
+    darkGrad.addColorStop(0.75, 'rgba(2, 4, 12, 0.9)');
+    darkGrad.addColorStop(1, 'rgba(0, 0, 0, 1)');
+    ctx.fillStyle = darkGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // ============ ФОНАРИК ЕЖА ============
+    const hx = (hedgehog.x - cam.x) * ZOOM;
+    const hy = (hedgehog.y - cam.y) * ZOOM;
+    const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300);
+    hGrad.addColorStop(0, 'rgba(255, 220, 150, 0.32)');
+    hGrad.addColorStop(0.5, 'rgba(255, 220, 150, 0.12)');
+    hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
+    ctx.fillStyle = hGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // ============ ВОЛКИ: видимость зависит от освещения ============
+    ctx.save();
+    ctx.scale(ZOOM, ZOOM);
+    ctx.translate(-cam.x, -cam.y);
+
+    wolves.forEach(w => {
+        const visible = isWolfVisible(w);
+
+        if (visible) {
+            // Полный волк
+            drawShadow(w.x, w.y + 8, 18);
+
+            let tint;
+            if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
+            else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
+            else if (w.targetingHedgehog) tint = 'rgba(220, 120, 40, 0.28)';
+            else tint = 'rgba(200, 30, 30, 0.28)';
+            ctx.beginPath();
+            ctx.arc(w.x, w.y, 26, 0, Math.PI * 2);
+            ctx.fillStyle = tint;
+            ctx.fill();
+
+            drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
+
+            if (w.state === 'search') {
+                ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace';
+                ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 34);
+            } else if (w.state === 'flee') {
+                ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace';
+                ctx.textAlign = 'center'; ctx.fillText('»', w.x, w.y - 34);
+            }
+        } else {
+            // В темноте: только светящиеся глаза
+            // Убегающий волк не светит глазами — он ушёл
+            if (w.state !== 'flee') {
+                drawWolfEyes(w);
+            }
+        }
+    });
+
+    // ============ ПЕРСОНАЖИ (всегда поверх тьмы) ============
+    // Glow костра
+    const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
+    const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4.5 * pulse);
+    fg.addColorStop(0, 'rgba(255, 200, 50, 0.55)');
+    fg.addColorStop(0.4, 'rgba(255, 120, 20, 0.22)');
+    fg.addColorStop(1, 'rgba(255, 80, 0, 0)');
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Охотник
+    drawShadow(hunter.x, hunter.y + 12, 22);
+    drawRotatedSprite('hunter', hunter.x, hunter.y, hunter.angle + ROT_OFFSET_HUNTER, SPRITES.hunter.size);
+    ctx.save();
+    ctx.translate(hunter.x, hunter.y);
+    ctx.rotate(hunter.angle);
+    ctx.fillStyle = '#3a3a3a';
+    ctx.fillRect(16, -3, 28, 6);
+    ctx.fillStyle = '#5a5a5a';
+    ctx.fillRect(40, -4, 8, 8);
+    ctx.restore();
+
+    if (hunter.target && !hunter.target.dead) {
+        const canFire = ammo > 0;
+        const block = getLOSBlock(hunter, hunter.target);
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(hunter.x, hunter.y);
+        if (block) {
+            ctx.lineTo(block.x, block.y);
+            ctx.setLineDash([6, 8]);
+            ctx.strokeStyle = 'rgba(160, 160, 160, 0.55)';
+        } else {
+            ctx.lineTo(hunter.target.x, hunter.target.y);
+            ctx.setLineDash([6, 8]);
+            ctx.strokeStyle = canFire ? 'rgba(255, 60, 60, 0.55)' : 'rgba(150, 150, 150, 0.35)';
+        }
+        ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]);
+        if (block) {
+            ctx.strokeStyle = 'rgba(220, 220, 220, 0.85)'; ctx.lineWidth = 2;
+            const bx = block.x, by = block.y;
+            ctx.beginPath();
+            ctx.moveTo(bx - 6, by - 6); ctx.lineTo(bx + 6, by + 6);
+            ctx.moveTo(bx - 6, by + 6); ctx.lineTo(bx + 6, by - 6);
+            ctx.stroke();
+        } else {
+            const tx = hunter.target.x, ty = hunter.target.y, cs = 10;
+            ctx.strokeStyle = canFire ? 'rgba(255, 90, 90, 0.95)' : 'rgba(180, 180, 180, 0.6)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(tx - cs, ty); ctx.lineTo(tx - 3, ty);
+            ctx.moveTo(tx + 3, ty);  ctx.lineTo(tx + cs, ty);
+            ctx.moveTo(tx, ty - cs); ctx.lineTo(tx, ty - 3);
+            ctx.moveTo(tx, ty + 3);  ctx.lineTo(tx, ty + cs);
+            ctx.stroke();
+            ctx.beginPath(); ctx.arc(tx, ty, cs - 2, 0, Math.PI * 2); ctx.stroke();
+        }
+        ctx.restore();
+    }
+    if (reloadTimer > 0) {
+        ctx.fillStyle = '#ff6666';
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('⏳ ' + reloadTimer.toFixed(1), hunter.x, hunter.y - 46);
+    }
+
+    // Ёж
+    drawShadow(hedgehog.x, hedgehog.y + 8, 16);
+    ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
+    drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
+    ctx.globalAlpha = 1;
+
+    // Искры
+    sparks.forEach(s => {
+        const a = s.ttl / s.maxTtl;
+        ctx.fillStyle = 'rgba(255, 220, 100, ' + a + ')';
+        ctx.beginPath(); ctx.arc(s.x, s.y, 4 + (1 - a) * 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255, 120, 40, ' + (a * 0.7) + ')';
+        ctx.beginPath(); ctx.arc(s.x, s.y, 2 + (1 - a) * 4, 0, Math.PI * 2); ctx.fill();
+    });
+
+    // Маркер цели
+    if (mouseScreen && gameState === 'playing') {
+        const ttx = mouseScreen.x / ZOOM + cam.x;
+        const tty = mouseScreen.y / ZOOM + cam.y;
+        if (Math.hypot(ttx - hedgehog.x, tty - hedgehog.y) > 8) {
+            ctx.beginPath();
+            ctx.arc(ttx, tty, 4, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 200, 100, 0.7)';
+            ctx.lineWidth = 1.5; ctx.stroke();
+        }
+    }
+
+    // Светлячки
+    const time = performance.now() / 1000;
+    fireflies.forEach(f => {
+        const fx = f.x + Math.sin(time * f.speed + f.phase) * 25;
+        const fy = f.y + Math.cos(time * f.speed * 0.7 + f.phase) * 18;
+        const alpha = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(time * 2.5 + f.phase));
+        ctx.fillStyle = `rgba(255, 200, 60, ${alpha * 0.25})`;
+        ctx.beginPath(); ctx.arc(fx, fy, f.radius * 4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = `rgba(255, 240, 150, ${alpha})`;
+        ctx.beginPath(); ctx.arc(fx, fy, f.radius, 0, Math.PI * 2); ctx.fill();
+    });
+
+    ctx.restore();
+
+    // ============ ВСПЫШКА УРОНА ============
+    if (damageFlash > 0) {
+        ctx.fillStyle = `rgba(180, 20, 20, ${damageFlash * 0.5})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // ============ HUD ============
+    document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
+    document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
+    document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
+    document.getElementById('waveNum').textContent    = waveNum;
+    document.getElementById('kills').textContent      = kills;
+    difficultyEl.textContent = breakCount + ' (волков: ' + getWolvesPerWave() + ')';
+    if (breakTimer > 0 && gameState === 'playing') {
+        breakStatus.style.display = 'block';
+        breakTimeEl.textContent = breakTimer.toFixed(1);
+    } else breakStatus.style.display = 'none';
+}
+
+function gameLoop(t) {
+    const dt = Math.min(0.05, (t - lastTime) / 1000);
+    lastTime = t;
+    if (damageFlash > 0) damageFlash = Math.max(0, damageFlash - dt);
+    if (gameState === 'playing') {
+        updateHedgehog(dt);
+        checkBushEntry();
+        updateWolves(dt);
+        updateHunter(dt);
+        updateSparks(dt);
+        if (breakTimer > 0) {
+            breakTimer -= dt;
+            if (breakTimer < 0) breakTimer = 0;
+        } else {
+            spawnTimer += dt;
+            if (spawnTimer > getSpawnInterval()) {
+                const perWave = getWolvesPerWave();
+                for (let i = 0; i < perWave; i++) spawnWolf();
+                spawnTimer = 0; waveNum++;
+            }
+        }
+        if (hedgehog.hp <= 0 || hunter.hp <= 0) endGame();
+    }
+    updateCamera(dt);
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+generateWorld();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
