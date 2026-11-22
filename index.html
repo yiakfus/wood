@@ -85,7 +85,11 @@ const difficultyEl = document.getElementById('difficulty');
 
 const WORLD_W = 2400;
 const WORLD_H = 1600;
-let ZOOM = 1.75; // как в бэкапе
+let ZOOM = 2.2;          // ★ базовый
+let ZOOM_TARGET = 2.2;   // ★ плавное следование
+const ZOOM_DYNAMIC_MAX = 1.30;  // ★ максимум +30% при близком волке
+const ZOOM_PROXIMITY_RADIUS = 220; // ★ радиус тревоги (волк ближе — зум растёт)
+const ZOOM_LERP_SPEED = 3.5;       // ★ скорость плавного зума
 
 const RELOAD_TIME       = 10;
 const SPAWN_INTERVAL    = 8;
@@ -108,13 +112,21 @@ const DIFFICULTY_SPAWN_STEP  = 0.5;
 const DIFFICULTY_SPEED_STEP  = 5;
 
 // ===== ПУЛИ =====
-const BULLET_SPEED = 900;   // мировой юнит/сек
-const BULLET_LIFE  = 1.2;   // сек (на всякий случай)
+const BULLET_SPEED = 900;
+const BULLET_LIFE  = 1.2;
 
 // ===== ЧАСТИЦЫ КОСТРА =====
 const FIRE_PARTICLES_PER_SEC = 18;
 
-// ===== ВИДИМОСТЬ ВОЛКОВ (world-unit) =====
+// ===== СЕРДЕЧКИ =====
+const HEART_DROP_CHANCE = 0.20;  // ★ шанс
+const HEART_LIFETIME    = 20;    // ★ сек
+const HEART_PICKUP_R    = 22;    // ★ радиус подбора
+
+// ===== АНИМАЦИЯ СМЕРТИ =====
+const DEATH_DURATION = 0.45;     // ★ сек
+
+// ===== ВИДИМОСТЬ ВОЛКОВ =====
 const VISIBLE_NEAR_FIRE     = 260;
 const VISIBLE_NEAR_HEDGEHOG = 220;
 
@@ -157,9 +169,11 @@ const traps   = [
 
 let gameState = 'menu';
 let wolves = [];
-let bullets = [];         // ← пули
-let fireParticles = [];   // ← частицы костра
+let bullets = [];
+let fireParticles = [];
 let fireSpawnAccum = 0;
+let hearts = [];               // ★ сердечки на земле
+let deathFx = [];              // ★ эффекты смерти
 let ammo = 1;
 let reloadTimer = 0;
 let spawnTimer = 0;
@@ -224,11 +238,12 @@ function drawSprite(key, x, y, sizeOverride) {
         ctx.fill();
     }
 }
-function drawRotatedSprite(key, x, y, angle, sizeOverride) {
+function drawRotatedSprite(key, x, y, angle, sizeOverride, alpha = 1) {
     const s = SPRITES[key];
     const size = sizeOverride || s.size;
     if (s.loaded) {
         ctx.save();
+        ctx.globalAlpha = alpha;
         ctx.translate(x, y);
         ctx.rotate(angle);
         ctx.drawImage(s.img, -size/2, -size/2, size, size);
@@ -270,9 +285,10 @@ function drawWolfEyes(w) {
 }
 
 // ===== CANVAS =====
-function computeZoom() {
+function computeBaseZoom() {
+    // ★ базовый зум побольше: 2.2 на узких, до 2.7 на широких
     const raw = canvas.width / 800;
-    return Math.min(1.75, Math.max(1.3, raw));
+    return Math.min(2.7, Math.max(2.2, raw * 1.6));
 }
 function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
@@ -280,7 +296,8 @@ function resizeCanvas() {
     canvas.height = Math.floor(window.innerHeight * dpr);
     canvas.style.width  = window.innerWidth  + 'px';
     canvas.style.height = window.innerHeight + 'px';
-    ZOOM = computeZoom();
+    ZOOM_TARGET = computeBaseZoom();
+    if (gameState !== 'playing') ZOOM = ZOOM_TARGET;
     ctx.imageSmoothingEnabled = false;
 }
 window.addEventListener('resize', resizeCanvas);
@@ -288,6 +305,22 @@ window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100)
 resizeCanvas();
 function viewW() { return canvas.width  / ZOOM; }
 function viewH() { return canvas.height / ZOOM; }
+
+// ★ Динамический зум по близости волка к ежу
+function updateZoom(dt) {
+    let base = computeBaseZoom();
+    let maxProximity = 0;
+    for (const w of wolves) {
+        if (w.dead || w.state === 'dying') continue;
+        const d = dist(w, hedgehog);
+        if (d < ZOOM_PROXIMITY_RADIUS) {
+            const k = 1 - d / ZOOM_PROXIMITY_RADIUS; // 0..1
+            if (k > maxProximity) maxProximity = k;
+        }
+    }
+    ZOOM_TARGET = base * (1 + (ZOOM_DYNAMIC_MAX - 1) * maxProximity);
+    ZOOM += (ZOOM_TARGET - ZOOM) * Math.min(1, dt * ZOOM_LERP_SPEED);
+}
 
 // ===== ГЕНЕРАЦИЯ МИРА =====
 function generateWorld() {
@@ -389,6 +422,7 @@ function startGame() {
     hedgehog.x = 1200; hedgehog.y = 980; hedgehog.hp = 3; hedgehog.angle = Math.PI / 2;
     hunter.hp = 3; hunter.target = null; hunter.angle = Math.PI / 2;
     wolves = []; sparks = []; bullets = []; fireParticles = []; damageFlash = 0;
+    hearts = []; deathFx = [];          // ★
     fireSpawnAccum = 0;
     ammo = 1; reloadTimer = 0;
     spawnTimer = SPAWN_INTERVAL - INITIAL_DELAY;
@@ -445,6 +479,7 @@ function separateWolves() {
     for (let i = 0; i < wolves.length; i++) {
         for (let j = i + 1; j < wolves.length; j++) {
             const a = wolves[i], b = wolves[j];
+            if (a.state === 'dying' || b.state === 'dying') continue;
             const dx = b.x - a.x, dy = b.y - a.y;
             const d = Math.hypot(dx, dy);
             const minD = a.radius + b.radius + WOLF_SEPARATION;
@@ -494,6 +529,38 @@ function getLOSBlock(from, to) {
     return best;
 }
 
+// ★ Смерть волка с анимацией + выпадение сердечка
+function killWolf(wolf, byTrap = false) {
+    if (wolf.state === 'dying') return;
+    wolf.state = 'dying';
+    wolf.deathT = 0;
+    wolf.spin = (Math.random() - 0.5) * 6;
+    deathFx.push({
+        x: wolf.x, y: wolf.y,
+        ttl: DEATH_DURATION, maxTtl: DEATH_DURATION,
+        parts: Array.from({ length: 10 }, () => ({
+            x: wolf.x + (Math.random() - 0.5) * 16,
+            y: wolf.y + (Math.random() - 0.5) * 16,
+            vx: (Math.random() - 0.5) * 180,
+            vy: (Math.random() - 0.5) * 180 - 40,
+            size: 2 + Math.random() * 3,
+            life: 0.4 + Math.random() * 0.4,
+            maxLife: 0.4 + Math.random() * 0.4,
+            color: Math.random() < 0.5 ? 'rgba(200, 30, 30,' : 'rgba(255, 180, 80,'
+        }))
+    });
+    // сердечко — только если не ловушка
+    if (!byTrap && Math.random() < HEART_DROP_CHANCE) {
+        hearts.push({
+            x: wolf.x, y: wolf.y,
+            type: Math.random() < 0.5 ? 'hedgehog' : 'hunter',
+            life: HEART_LIFETIME, maxLife: HEART_LIFETIME,
+            bobPhase: Math.random() * Math.PI * 2
+        });
+    }
+    registerKill();
+}
+
 function registerKill() {
     kills++;
     if (traps.some(t => !t.active)) {
@@ -507,7 +574,7 @@ function registerKill() {
         killsSinceBreak++;
         if (killsSinceBreak >= BREAK_KILLS) {
             breakTimer = BREAK_DURATION; killsSinceBreak = 0; spawnTimer = 0; breakCount++;
-            wolves.forEach(w => { w.state = 'flee'; w.targetingHedgehog = false; });
+            wolves.forEach(w => { if (w.state !== 'dying') { w.state = 'flee'; w.targetingHedgehog = false; } });
         }
     }
 }
@@ -546,6 +613,10 @@ function updateWolves(dt) {
     const hidden = isHedgehogHidden();
     const speed = getWolfSpeed();
     wolves.forEach(wolf => {
+        if (wolf.state === 'dying') {
+            wolf.deathT += dt;
+            return; // не двигается, не атакует
+        }
         const dH = dist(wolf, hedgehog), dHunt = dist(wolf, hunter);
         if (breakTimer > 0) {
             wolf.state = 'flee'; wolf.targetingHedgehog = false;
@@ -560,8 +631,8 @@ function updateWolves(dt) {
             if (dF > FLEE_DESPAWN_DIST) wolf.dead = true;
             return;
         }
-        if (dH < wolf.radius + hedgehog.radius && !hidden) { hedgehog.hp -= 1; wolf.dead = true; damageFlash = 0.4; return; }
-        if (dHunt < wolf.radius + hunter.radius) { hunter.hp -= 1; wolf.dead = true; damageFlash = 0.4; return; }
+        if (dH < wolf.radius + hedgehog.radius && !hidden) { hedgehog.hp -= 1; killWolf(wolf); damageFlash = 0.4; return; }
+        if (dHunt < wolf.radius + hunter.radius) { hunter.hp -= 1; killWolf(wolf); damageFlash = 0.4; return; }
         if (wolf.state === 'search') {
             wolf.searchTimer -= dt;
             if (wolf.searchTimer <= 0) wolf.state = 'hunt';
@@ -581,15 +652,56 @@ function updateWolves(dt) {
         resolveObstacles(wolf);
         traps.forEach(trap => {
             if (trap.active && dist(wolf, trap) < trap.r) {
-                wolf.dead = true; trap.active = false; registerKill();
+                trap.active = false;
+                killWolf(wolf, true); // ★ byTrap = true
             }
         });
     });
     separateWolves();
-    wolves = wolves.filter(w => !w.dead);
+    wolves = wolves.filter(w => {
+        if (w.dead) return false;
+        if (w.state === 'dying' && w.deathT >= DEATH_DURATION) return false;
+        return true;
+    });
 }
 
-// ===== ПУЛИ: огонь и апдейт =====
+// ★ Обновление сердечек
+function updateHearts(dt) {
+    hearts.forEach(h => {
+        h.life -= dt;
+        h.bobPhase += dt * 3;
+    });
+    // подбор
+    for (const h of hearts) {
+        if (h.life <= 0) continue;
+        if (dist(h, hedgehog) < HEART_PICKUP_R + hedgehog.radius) {
+            if (h.type === 'hedgehog' && hedgehog.hp < 3) {
+                hedgehog.hp = Math.min(3, hedgehog.hp + 1);
+                h.life = -1;
+            } else if (h.type === 'hunter' && hunter.hp < 3) {
+                hunter.hp = Math.min(3, hunter.hp + 1);
+                h.life = -1;
+            }
+        }
+    }
+    hearts = hearts.filter(h => h.life > 0);
+}
+
+// ★ Обновление эффектов смерти
+function updateDeathFx(dt) {
+    deathFx.forEach(fx => {
+        fx.ttl -= dt;
+        fx.parts.forEach(p => {
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.vy += 200 * dt; // гравитация
+            p.life -= dt;
+        });
+    });
+    deathFx = deathFx.filter(fx => fx.ttl > 0);
+}
+
+// ===== ПУЛИ =====
 function fireBullet(target) {
     const dx = target.x - hunter.x, dy = target.y - hunter.y;
     const d = Math.hypot(dx, dy) || 1;
@@ -610,22 +722,17 @@ function updateBullets(dt) {
         if (b.dead) return;
         b.trail.push({ x: b.x, y: b.y });
         if (b.trail.length > 8) b.trail.shift();
-
         b.x += b.vx * dt;
         b.y += b.vy * dt;
         b.life -= dt;
-
-        // Проверка попадания в цель
-        if (b.target && !b.target.dead) {
+        if (b.target && !b.target.dead && b.target.state !== 'dying') {
             const d = Math.hypot(b.target.x - b.x, b.target.y - b.y);
             if (d < b.target.radius + 12) {
-                b.target.dead = true;
-                registerKill();
+                killWolf(b.target);   // ★
                 sparks.push({ x: b.target.x, y: b.target.y, ttl: 0.35, maxTtl: 0.35 });
                 b.dead = true;
             }
         }
-        // Проверка на препятствие
         for (const o of obstacles) {
             if (Math.hypot(b.x - o.x, b.y - o.y) < o.r) {
                 sparks.push({ x: b.x, y: b.y, ttl: 0.5, maxTtl: 0.5 });
@@ -633,7 +740,6 @@ function updateBullets(dt) {
                 break;
             }
         }
-        // Лимит жизни / выход за мир
         if (b.life <= 0 || b.x < 0 || b.x > WORLD_W || b.y < 0 || b.y > WORLD_H) {
             b.dead = true;
         }
@@ -641,12 +747,11 @@ function updateBullets(dt) {
     bullets = bullets.filter(b => !b.dead);
 }
 
-// ===== ЧАСТИЦЫ КОСТРА =====
 function updateFireParticles(dt) {
     fireSpawnAccum += dt * FIRE_PARTICLES_PER_SEC;
     while (fireSpawnAccum >= 1) {
         fireSpawnAccum -= 1;
-        const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.1; // вверх с разбросом
+        const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.1;
         const speed = 25 + Math.random() * 45;
         fireParticles.push({
             x: campfire.x + (Math.random() - 0.5) * 14,
@@ -664,7 +769,7 @@ function updateFireParticles(dt) {
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.vx *= (1 - dt * 1.5);
-        p.vy -= 15 * dt; // чуть вверх (пламя)
+        p.vy -= 15 * dt;
         p.life -= dt;
     });
     fireParticles = fireParticles.filter(p => p.life > 0);
@@ -676,6 +781,7 @@ function updateHunter(dt) {
     if (wolves.length > 0) {
         let best = null, bestScore = Infinity;
         wolves.forEach(w => {
+            if (w.state === 'dying') return;
             const d = dist(w, hunter);
             if (d > HUNTER_RANGE) return;
             let score;
@@ -717,7 +823,6 @@ function draw() {
     ctx.fillStyle = '#050a07';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ============ МИР ДО ТЬМЫ ============
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -780,7 +885,7 @@ function draw() {
     // ============ ФОНАРИК ЕЖА ============
     const hx = (hedgehog.x - cam.x) * ZOOM;
     const hy = (hedgehog.y - cam.y) * ZOOM;
-    const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300);
+    const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300 * (ZOOM / 2.2));
     hGrad.addColorStop(0, 'rgba(255, 220, 150, 0.32)');
     hGrad.addColorStop(0.5, 'rgba(255, 220, 150, 0.12)');
     hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
@@ -793,11 +898,18 @@ function draw() {
     ctx.translate(-cam.x, -cam.y);
 
     wolves.forEach(w => {
+        if (w.state === 'dying') {
+            // ★ анимация смерти: вращение + затухание + уменьшение
+            const t = w.deathT / DEATH_DURATION; // 0..1
+            const alpha = 1 - t;
+            const scale = 1 - t * 0.6;
+            drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF + w.spin * t,
+                              SPRITES.wolf.size * scale, alpha);
+            return;
+        }
         const visible = isWolfVisible(w);
-
         if (visible) {
             drawShadow(w.x, w.y + 8, 18);
-
             let tint;
             if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
             else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
@@ -807,9 +919,7 @@ function draw() {
             ctx.arc(w.x, w.y, 26, 0, Math.PI * 2);
             ctx.fillStyle = tint;
             ctx.fill();
-
             drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
-
             if (w.state === 'search') {
                 ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace';
                 ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 34);
@@ -818,14 +928,11 @@ function draw() {
                 ctx.textAlign = 'center'; ctx.fillText('»', w.x, w.y - 34);
             }
         } else {
-            if (w.state !== 'flee') {
-                drawWolfEyes(w);
-            }
+            if (w.state !== 'flee') drawWolfEyes(w);
         }
     });
 
     // ============ ПЕРСОНАЖИ ============
-    // Glow костра
     const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
     const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4.5 * pulse);
     fg.addColorStop(0, 'rgba(255, 200, 50, 0.55)');
@@ -836,14 +943,39 @@ function draw() {
     ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2);
     ctx.fill();
 
-    // ===== ЧАСТИЦЫ КОСТРА =====
+    // ★ Сердечки на земле
+    hearts.forEach(h => {
+        const bob = Math.sin(h.bobPhase) * 4;
+        const alpha = h.life < 3 ? (h.life / 3) * 0.8 + 0.2 : 1; // мигание перед исчезновением
+        const color = h.type === 'hedgehog' ? '#ff5577' : '#ffcc66';
+        const outline = h.type === 'hedgehog' ? '#ffdde3' : '#fff1c8';
+        // свечение
+        ctx.fillStyle = h.type === 'hedgehog' ? 'rgba(255, 85, 119, 0.25)' : 'rgba(255, 204, 102, 0.25)';
+        ctx.beginPath();
+        ctx.arc(h.x, h.y + bob, 18, 0, Math.PI * 2);
+        ctx.fill();
+        // сердечко
+        drawHeart(h.x, h.y + bob, 9, color, outline, alpha);
+    });
+
+    // ★ Частицы от эффектов смерти
+    deathFx.forEach(fx => {
+        fx.parts.forEach(p => {
+            const a = Math.max(0, p.life / p.maxLife);
+            ctx.fillStyle = p.color + (a * 0.9) + ')';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size * a, 0, Math.PI * 2);
+            ctx.fill();
+        });
+    });
+
+    // Частицы костра
     fireParticles.forEach(p => {
         const a = Math.max(0, p.life / p.maxLife);
         ctx.fillStyle = `hsla(${p.hue}, 100%, 60%, ${a * 0.9})`;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size * a, 0, Math.PI * 2);
         ctx.fill();
-        // мягкое свечение вокруг
         ctx.fillStyle = `hsla(${p.hue}, 100%, 55%, ${a * 0.25})`;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size * a * 2.5, 0, Math.PI * 2);
@@ -862,7 +994,7 @@ function draw() {
     ctx.fillRect(40, -4, 8, 8);
     ctx.restore();
 
-    if (hunter.target && !hunter.target.dead) {
+    if (hunter.target && !hunter.target.dead && hunter.target.state !== 'dying') {
         const canFire = ammo > 0;
         const block = getLOSBlock(hunter, hunter.target);
         ctx.save();
@@ -906,9 +1038,8 @@ function draw() {
         ctx.fillText('⏳ ' + reloadTimer.toFixed(1), hunter.x, hunter.y - 46);
     }
 
-    // ===== ПУЛИ (трассеры) =====
+    // Пули
     bullets.forEach(b => {
-        // хвост
         if (b.trail.length > 1) {
             for (let i = 0; i < b.trail.length - 1; i++) {
                 const t = b.trail[i], t2 = b.trail[i + 1];
@@ -921,15 +1052,10 @@ function draw() {
                 ctx.stroke();
             }
         }
-        // ядро пули
         ctx.fillStyle = 'rgba(255, 250, 180, 0.95)';
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, 3.5, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = 'rgba(255, 180, 60, 0.5)';
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, 7, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
     });
 
     // Ёж
@@ -947,7 +1073,6 @@ function draw() {
         ctx.beginPath(); ctx.arc(s.x, s.y, 2 + (1 - a) * 4, 0, Math.PI * 2); ctx.fill();
     });
 
-    // Маркер цели
     if (mouseScreen && gameState === 'playing') {
         const ttx = mouseScreen.x / ZOOM + cam.x;
         const tty = mouseScreen.y / ZOOM + cam.y;
@@ -959,7 +1084,6 @@ function draw() {
         }
     }
 
-    // Светлячки
     const time = performance.now() / 1000;
     fireflies.forEach(f => {
         const fx = f.x + Math.sin(time * f.speed + f.phase) * 25;
@@ -973,13 +1097,11 @@ function draw() {
 
     ctx.restore();
 
-    // ============ ВСПЫШКА УРОНА ============
     if (damageFlash > 0) {
         ctx.fillStyle = `rgba(180, 20, 20, ${damageFlash * 0.5})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
-    // ============ HUD ============
     document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
     document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
     document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
@@ -991,17 +1113,38 @@ function draw() {
     } else breakStatus.style.display = 'none';
 }
 
+// ★ Рисует сердечко
+function drawHeart(cx, cy, size, fill, outline, alpha = 1) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    const s = size;
+    ctx.moveTo(cx, cy + s * 0.7);
+    ctx.bezierCurveTo(cx + s * 1.3, cy - s * 0.2, cx + s * 0.6, cy - s * 1.1, cx, cy - s * 0.4);
+    ctx.bezierCurveTo(cx - s * 0.6, cy - s * 1.1, cx - s * 1.3, cy - s * 0.2, cx, cy + s * 0.7);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+}
+
 function gameLoop(t) {
     const dt = Math.min(0.05, (t - lastTime) / 1000);
     lastTime = t;
     if (damageFlash > 0) damageFlash = Math.max(0, damageFlash - dt);
     if (gameState === 'playing') {
+        updateZoom(dt);             // ★
         updateHedgehog(dt);
         checkBushEntry();
         updateWolves(dt);
         updateHunter(dt);
         updateBullets(dt);
         updateFireParticles(dt);
+        updateHearts(dt);           // ★
+        updateDeathFx(dt);          // ★
         updateSparks(dt);
         if (breakTimer > 0) {
             breakTimer -= dt;
