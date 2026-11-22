@@ -110,17 +110,28 @@ const MIN_SPAWN_INTERVAL     = 4;
 const DIFFICULTY_SPAWN_STEP  = 0.5;
 const DIFFICULTY_SPEED_STEP  = 5;
 
+// ===== ПОВОРОТЫ СПРАЙТОВ =====
+// Если персонаж смотрит не туда — подкрутите одну из этих констант:
+//   -π/2 = спрайт нарисован «смотрящим вниз» (стандарт top-down)
+//    0    = спрайт нарисован «смотрящим вправо»
+//   +π/2  = спрайт нарисован «смотрящим вверх»
+const ROT_OFFSET_HEDGEHOG = -Math.PI / 2;
+const ROT_OFFSET_WOLF     = -Math.PI / 2;
+const ROT_OFFSET_HUNTER   = -Math.PI / 2;
+
 // ===== СПРАЙТЫ =====
+// Все PNG 128×128 — размеры подобраны, чтобы персонажи читались, а лес был плотным.
+// ВАЖНО: grass.path — замените на ваш рабочий путь!
 const SPRITES = {
-    hedgehog: { path: 'https://yiakfus.github.io/wood/asset/sprites/hedgehog.png', size: 46,  loaded: false },
-    wolf:     { path: 'https://yiakfus.github.io/wood/asset/sprites/wolf.png',     size: 46,  loaded: false },
-    hunter:   { path: 'https://yiakfus.github.io/wood/asset/sprites/hunter.png',   size: 60,  loaded: false },
-    campfire: { path: 'https://yiakfus.github.io/wood/asset/sprites/campfire.png', size: 72,  loaded: false },
-    tree:     { path: 'https://yiakfus.github.io/wood/asset/sprites/tree.png',     size: 96,  loaded: false },
-    rock:     { path: 'https://yiakfus.github.io/wood/asset/sprites/rock.png',     size: 56,  loaded: false },
-    bush:     { path: 'https://yiakfus.github.io/wood/asset/sprites/bush.png',     size: 140, loaded: false },
-    trap:     { path: 'https://yiakfus.github.io/wood/asset/sprites/trap.png',     size: 96,  loaded: false },
-    grass:    { path: 'https://yiakfus.github.io/wood/asset/sprites/grass.png',      size: 96,  loaded: false },
+    hedgehog: { path: 'assets/sprites/hedgehog.png', size: 48,  loaded: false },
+    wolf:     { path: 'assets/sprites/wolf.png',     size: 60,  loaded: false },
+    hunter:   { path: 'assets/sprites/hunter.png',   size: 76,  loaded: false },
+    campfire: { path: 'assets/sprites/campfire.png', size: 88,  loaded: false },
+    tree:     { path: 'assets/sprites/tree.png',     size: 100, loaded: false },
+    rock:     { path: 'assets/sprites/rock.png',     size: 64,  loaded: false },
+    bush:     { path: 'assets/sprites/bush.png',     size: 144, loaded: false },
+    trap:     { path: 'assets/sprites/trap.png',     size: 96,  loaded: false },
+    grass:    { path: 'assets/tiles/grass.png',      size: 96,  loaded: false }, // ⚠️ ваш рабочий путь
 };
 for (const key in SPRITES) {
     const s = SPRITES[key];
@@ -131,8 +142,8 @@ for (const key in SPRITES) {
 }
 ctx.imageSmoothingEnabled = false;
 
-const hedgehog = { x: 1200, y: 980, radius: 12, hp: 3 };
-const hunter   = { x: 1200, y: 800, radius: 18, hp: 3, target: null };
+const hedgehog = { x: 1200, y: 980, radius: 12, hp: 3, angle: Math.PI / 2 };
+const hunter   = { x: 1200, y: 800, radius: 18, hp: 3, target: null, angle: Math.PI / 2 };
 const campfire = { x: 1200, y: 865, radius: 26 };
 
 let obstacles = [];
@@ -205,6 +216,22 @@ function drawSprite(key, x, y, sizeOverride) {
         ctx.fill();
     }
 }
+function drawRotatedSprite(key, x, y, angle, sizeOverride) {
+    const s = SPRITES[key];
+    const size = sizeOverride || s.size;
+    if (s.loaded) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+        ctx.drawImage(s.img, -size/2, -size/2, size, size);
+        ctx.restore();
+    } else {
+        ctx.beginPath();
+        ctx.arc(x, y, size * 0.35, 0, Math.PI * 2);
+        ctx.fillStyle = '#444';
+        ctx.fill();
+    }
+}
 function drawShadow(x, y, radius, opacity = 0.4) {
     ctx.beginPath();
     ctx.ellipse(x, y + radius * 0.55, radius * 0.95, radius * 0.35, 0, 0, Math.PI * 2);
@@ -236,31 +263,52 @@ function viewH() { return canvas.height / ZOOM; }
 function generateWorld() {
     obstacles = [];
     bushes = [];
+
+    // Деревья (радиус коллизии 28–38 — честнее к визуалу)
     for (let i = 0; i < 100; i++) {
         for (let tries = 0; tries < 40; tries++) {
             const x = randRange(60, WORLD_W - 60);
             const y = randRange(60, WORLD_H - 60);
-            const r = randRange(22, 32);
-            if (Math.hypot(x - 1200, y - 800) < 260 + r) continue;
+            const r = randRange(28, 38);
+            if (Math.hypot(x - 1200, y - 800) < 280 + r) continue;
             if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 25)) continue;
             obstacles.push({ x, y, r, type: 'tree' });
             break;
         }
     }
+    // Камни
     for (let i = 0; i < 30; i++) {
         for (let tries = 0; tries < 40; tries++) {
             const x = randRange(60, WORLD_W - 60);
             const y = randRange(60, WORLD_H - 60);
-            const r = randRange(18, 28);
-            if (Math.hypot(x - 1200, y - 800) < 260 + r) continue;
+            const r = randRange(20, 30);
+            if (Math.hypot(x - 1200, y - 800) < 280 + r) continue;
             if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 25)) continue;
             obstacles.push({ x, y, r, type: 'rock' });
             break;
         }
     }
-    for (let i = 0; i < 14; i++) {
+
+    // ==== КУСТЫ: сначала 6 ближних (220–380 от костра) — ёж успевает ====
+    for (let i = 0; i < 6; i++) {
+        for (let tries = 0; tries < 100; tries++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dR = randRange(220, 380);
+            const x = 1200 + Math.cos(angle) * dR;
+            const y = 800  + Math.sin(angle) * dR;
+            const r = randRange(50, 65);
+            if (Math.hypot(x - 1200, y - 800) < 200 + r) continue;
+            if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
+            if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 20)) continue;
+            if (bushes.some(b => Math.hypot(b.x - x, b.y - y) < b.r + r + 60)) continue;
+            bushes.push({ x, y, r });
+            break;
+        }
+    }
+    // Остальные 8 кустов — где угодно
+    for (let i = 0; i < 8; i++) {
         for (let tries = 0; tries < 40; tries++) {
             const x = randRange(80, WORLD_W - 80);
             const y = randRange(80, WORLD_H - 80);
@@ -312,8 +360,8 @@ canvas.addEventListener('pointercancel', () => { mouseScreen = null; });
 // ===== ЖИЗНЕННЫЙ ЦИКЛ =====
 function startGame() {
     resizeCanvas();
-    hedgehog.x = 1200; hedgehog.y = 980; hedgehog.hp = 3;
-    hunter.hp = 3; hunter.target = null;
+    hedgehog.x = 1200; hedgehog.y = 980; hedgehog.hp = 3; hedgehog.angle = Math.PI / 2;
+    hunter.hp = 3; hunter.target = null; hunter.angle = Math.PI / 2;
     wolves = []; sparks = []; damageFlash = 0;
     ammo = 1; reloadTimer = 0;
     spawnTimer = SPAWN_INTERVAL - INITIAL_DELAY;
@@ -388,10 +436,10 @@ function spawnWolf() {
         const y = clamp(hunter.y + Math.sin(angle) * d, 40, WORLD_H - 40);
         if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + 25)) continue;
         if (traps.some(t => t.active && Math.hypot(t.x - x, t.y - y) < t.r + 30)) continue;
-        wolves.push({ x, y, radius: 14, targetingHedgehog: false, state: 'hunt', searchTimer: 0 });
+        wolves.push({ x, y, radius: 14, targetingHedgehog: false, state: 'hunt', searchTimer: 0, angle: Math.PI / 2 });
         return;
     }
-    wolves.push({ x: 100, y: 100, radius: 14, targetingHedgehog: false, state: 'hunt', searchTimer: 0 });
+    wolves.push({ x: 100, y: 100, radius: 14, targetingHedgehog: false, state: 'hunt', searchTimer: 0, angle: Math.PI / 2 });
 }
 function rayCircle(ox, oy, dx, dy, cx, cy, r) {
     const fx = ox - cx, fy = oy - cy;
@@ -442,7 +490,11 @@ function updateHedgehog(dt) {
         if (d > 4) { vx = dx / d; vy = dy / d; }
     }
     const len = Math.hypot(vx, vy);
-    if (len > 0) { hedgehog.x += (vx / len) * HEDGEHOG_SPEED * dt; hedgehog.y += (vy / len) * HEDGEHOG_SPEED * dt; }
+    if (len > 0) {
+        hedgehog.x += (vx / len) * HEDGEHOG_SPEED * dt;
+        hedgehog.y += (vy / len) * HEDGEHOG_SPEED * dt;
+        hedgehog.angle = Math.atan2(vy, vx);   // поворот по направлению движения
+    }
     resolveObstacles(hedgehog);
 }
 function checkBushEntry() {
@@ -465,7 +517,11 @@ function updateWolves(dt) {
             wolf.state = 'flee'; wolf.targetingHedgehog = false;
             const dxF = wolf.x - hunter.x, dyF = wolf.y - hunter.y;
             const dF = Math.hypot(dxF, dyF);
-            if (dF > 0) { wolf.x += (dxF / dF) * speed * FLEE_SPEED_MULT * dt; wolf.y += (dyF / dF) * speed * FLEE_SPEED_MULT * dt; }
+            if (dF > 0) {
+                wolf.x += (dxF / dF) * speed * FLEE_SPEED_MULT * dt;
+                wolf.y += (dyF / dF) * speed * FLEE_SPEED_MULT * dt;
+                wolf.angle = Math.atan2(dyF, dxF);
+            }
             resolveObstacles(wolf);
             if (dF > FLEE_DESPAWN_DIST) wolf.dead = true;
             return;
@@ -483,7 +539,11 @@ function updateWolves(dt) {
         else { wolf.targetingHedgehog = false; target = hunter; }
         const dx = target.x - wolf.x, dy = target.y - wolf.y;
         const dd = Math.hypot(dx, dy);
-        if (dd > 0) { wolf.x += (dx / dd) * speed * dt; wolf.y += (dy / dd) * speed * dt; }
+        if (dd > 0) {
+            wolf.x += (dx / dd) * speed * dt;
+            wolf.y += (dy / dd) * speed * dt;
+            wolf.angle = Math.atan2(dy, dx);   // поворот волка по движению
+        }
         resolveObstacles(wolf);
         traps.forEach(trap => {
             if (trap.active && dist(wolf, trap) < trap.r) {
@@ -510,12 +570,18 @@ function updateHunter(dt) {
             if (score < bestScore) { bestScore = score; best = w; }
         });
         hunter.target = best;
+        // Поворот охотника: к цели, иначе — к ежу
+        const aim = (best && !best.dead) ? best : hedgehog;
+        hunter.angle = Math.atan2(aim.y - hunter.y, aim.x - hunter.x);
         if (best && ammo > 0) {
             const block = getLOSBlock(hunter, best);
             if (block) sparks.push({ x: block.x, y: block.y, ttl: 0.5, maxTtl: 0.5 });
             else { best.dead = true; registerKill(); }
             ammo = 0; reloadTimer = RELOAD_TIME;
         }
+    } else {
+        // Нет волков — охотник смотрит на ежа
+        hunter.angle = Math.atan2(hedgehog.y - hunter.y, hedgehog.x - hunter.x);
     }
 }
 function updateSparks(dt) { sparks.forEach(s => s.ttl -= dt); sparks = sparks.filter(s => s.ttl > 0); }
@@ -546,6 +612,7 @@ function draw() {
     ctx.fillStyle = '#050a07';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    // ============ МИР (мировые координаты) ============
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -576,47 +643,80 @@ function draw() {
         ctx.fillText(trap.active ? 'готово' : (Math.min(TRAP_RELOAD_KILLS, killsSinceReload) + '/' + TRAP_RELOAD_KILLS), trap.x, trap.y + 5);
     });
 
-    // 4) ДЕРЕВЬЯ И КАМНИ
+    // 4) ДЕРЕВЬЯ И КАМНИ (с тенями)
     obstacles.forEach(o => {
         drawShadow(o.x, o.y + o.r * 0.4, o.r * 1.1);
         if (o.type === 'tree') drawSprite('tree', o.x, o.y, o.r * 2.9);
         else drawSprite('rock', o.x, o.y, o.r * 2.1);
     });
 
-    // 5) КОСТЁР
-    const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
-    const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4 * pulse);
-    fg.addColorStop(0, 'rgba(255, 200, 50, 0.75)');
-    fg.addColorStop(0.4, 'rgba(255, 120, 20, 0.35)');
-    fg.addColorStop(1, 'rgba(255, 80, 0, 0)');
-    ctx.fillStyle = fg;
-    ctx.beginPath();
-    ctx.arc(campfire.x, campfire.y, campfire.radius * 4 * pulse, 0, Math.PI * 2);
-    ctx.fill();
+    // 5) КОСТЁР-СПРАЙТ (glow будет нарисован отдельно поверх тьмы)
     drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
 
     // 6) РАДИУС ПРИМАНИВАНИЯ
     ctx.beginPath();
     ctx.arc(hedgehog.x, hedgehog.y, ATTRACT_RADIUS, 0, Math.PI * 2);
     ctx.setLineDash([6, 8]);
-    ctx.strokeStyle = 'rgba(210, 105, 30, 0.15)';
+    ctx.strokeStyle = 'rgba(210, 105, 30, 0.12)';
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // 7) ОХОТНИК + ствол + прицел
+    ctx.restore();
+
+    // ============ СЛОЙ ТЬМЫ (экранные координаты) ============
+    const cx = (campfire.x - cam.x) * ZOOM;
+    const cy = (campfire.y - cam.y) * ZOOM;
+    const litR = 350 * ZOOM;
+    const darkR = Math.max(canvas.width, canvas.height) * 0.9;
+
+    const darkGrad = ctx.createRadialGradient(cx, cy, litR, cx, cy, darkR);
+    darkGrad.addColorStop(0, 'rgba(5, 10, 25, 0)');
+    darkGrad.addColorStop(0.45, 'rgba(5, 10, 25, 0.45)');
+    darkGrad.addColorStop(0.8, 'rgba(3, 6, 18, 0.85)');
+    darkGrad.addColorStop(1, 'rgba(2, 4, 12, 0.97)');
+    ctx.fillStyle = darkGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // ============ ФОНАРИК ЕЖА (поверх тьмы, мягкий ореол) ============
+    const hx = (hedgehog.x - cam.x) * ZOOM;
+    const hy = (hedgehog.y - cam.y) * ZOOM;
+    const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 180);
+    hGrad.addColorStop(0, 'rgba(255, 220, 150, 0.18)');
+    hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
+    ctx.fillStyle = hGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // ============ ПЕРСОНАЖИ (поверх тьмы, чтобы были видны всегда) ============
+    ctx.save();
+    ctx.scale(ZOOM, ZOOM);
+    ctx.translate(-cam.x, -cam.y);
+
+    // Glow костра поверх тьмы — создаёт «дырку» в темноте
+    const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
+    const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4.5 * pulse);
+    fg.addColorStop(0, 'rgba(255, 200, 50, 0.55)');
+    fg.addColorStop(0.4, 'rgba(255, 120, 20, 0.22)');
+    fg.addColorStop(1, 'rgba(255, 80, 0, 0)');
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Охотник
     drawShadow(hunter.x, hunter.y + 12, 22);
-    drawSprite('hunter', hunter.x, hunter.y, SPRITES.hunter.size);
-    const aimTarget = (hunter.target && !hunter.target.dead) ? hunter.target : hedgehog;
-    const angle = Math.atan2(aimTarget.y - hunter.y, aimTarget.x - hunter.x);
+    drawRotatedSprite('hunter', hunter.x, hunter.y, hunter.angle + ROT_OFFSET_HUNTER, SPRITES.hunter.size);
+    // Ствол охотника — совпадает с направлением тела
     ctx.save();
     ctx.translate(hunter.x, hunter.y);
-    ctx.rotate(angle);
+    ctx.rotate(hunter.angle);
     ctx.fillStyle = '#3a3a3a';
-    ctx.fillRect(14, -3, 26, 6);
+    ctx.fillRect(16, -3, 28, 6);
     ctx.fillStyle = '#5a5a5a';
-    ctx.fillRect(36, -4, 8, 8);
+    ctx.fillRect(40, -4, 8, 8);
     ctx.restore();
+
+    // Прицел
     if (hunter.target && !hunter.target.dead) {
         const canFire = ammo > 0;
         const block = getLOSBlock(hunter, hunter.target);
@@ -635,10 +735,10 @@ function draw() {
         ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]);
         if (block) {
             ctx.strokeStyle = 'rgba(220, 220, 220, 0.85)'; ctx.lineWidth = 2;
-            const cx = block.x, cy = block.y;
+            const bx = block.x, by = block.y;
             ctx.beginPath();
-            ctx.moveTo(cx - 6, cy - 6); ctx.lineTo(cx + 6, cy + 6);
-            ctx.moveTo(cx - 6, cy + 6); ctx.lineTo(cx + 6, cy - 6);
+            ctx.moveTo(bx - 6, by - 6); ctx.lineTo(bx + 6, by + 6);
+            ctx.moveTo(bx - 6, by + 6); ctx.lineTo(bx + 6, by - 6);
             ctx.stroke();
         } else {
             const tx = hunter.target.x, ty = hunter.target.y, cs = 10;
@@ -658,38 +758,41 @@ function draw() {
         ctx.fillStyle = '#ff6666';
         ctx.font = 'bold 12px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('⏳ ' + reloadTimer.toFixed(1), hunter.x, hunter.y - 40);
+        ctx.fillText('⏳ ' + reloadTimer.toFixed(1), hunter.x, hunter.y - 46);
     }
 
-    // 8) ВОЛКИ
+    // Волки
     wolves.forEach(w => {
         drawShadow(w.x, w.y + 8, 18);
-        drawSprite('wolf', w.x, w.y, SPRITES.wolf.size);
+        // Цветовой ореол статуса (под спрайтом)
         let tint = null;
-        if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.35)';
-        else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.35)';
-        else if (w.targetingHedgehog) tint = 'rgba(220, 120, 40, 0.3)';
-        else tint = 'rgba(200, 30, 30, 0.3)';
+        if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
+        else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
+        else if (w.targetingHedgehog) tint = 'rgba(220, 120, 40, 0.28)';
+        else tint = 'rgba(200, 30, 30, 0.28)';
         ctx.beginPath();
-        ctx.arc(w.x, w.y, 24, 0, Math.PI * 2);
+        ctx.arc(w.x, w.y, 26, 0, Math.PI * 2);
         ctx.fillStyle = tint;
         ctx.fill();
+
+        drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
+
         if (w.state === 'search') {
             ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace';
-            ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 30);
+            ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 34);
         } else if (w.state === 'flee') {
             ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace';
-            ctx.textAlign = 'center'; ctx.fillText('»', w.x, w.y - 30);
+            ctx.textAlign = 'center'; ctx.fillText('»', w.x, w.y - 34);
         }
     });
 
-    // 9) ЁЖ
+    // Ёж
     drawShadow(hedgehog.x, hedgehog.y + 8, 16);
-    ctx.globalAlpha = isHedgehogHidden() ? 0.45 : 1;
-    drawSprite('hedgehog', hedgehog.x, hedgehog.y, SPRITES.hedgehog.size);
+    ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
+    drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
     ctx.globalAlpha = 1;
 
-    // 10) ИСКРЫ
+    // Искры
     sparks.forEach(s => {
         const a = s.ttl / s.maxTtl;
         ctx.fillStyle = 'rgba(255, 220, 100, ' + a + ')';
@@ -698,7 +801,7 @@ function draw() {
         ctx.beginPath(); ctx.arc(s.x, s.y, 2 + (1 - a) * 4, 0, Math.PI * 2); ctx.fill();
     });
 
-    // 11) МАРКЕР ЦЕЛИ
+    // Маркер цели (куда идёт ёж)
     if (mouseScreen && gameState === 'playing') {
         const ttx = mouseScreen.x / ZOOM + cam.x;
         const tty = mouseScreen.y / ZOOM + cam.y;
@@ -710,7 +813,7 @@ function draw() {
         }
     }
 
-    // 12) СВЕТЛЯЧКИ
+    // Светлячки (поверх тьмы — их всегда видно)
     const time = performance.now() / 1000;
     fireflies.forEach(f => {
         const fx = f.x + Math.sin(time * f.speed + f.phase) * 25;
@@ -724,25 +827,13 @@ function draw() {
 
     ctx.restore();
 
-    // ===== АТМОСФЕРНЫЙ СЛОЙ =====
-    ctx.fillStyle = 'rgba(15, 25, 55, 0.28)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const vig = ctx.createRadialGradient(
-        canvas.width/2, canvas.height/2, Math.min(canvas.width, canvas.height) * 0.35,
-        canvas.width/2, canvas.height/2, Math.max(canvas.width, canvas.height) * 0.75
-    );
-    vig.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    vig.addColorStop(1, 'rgba(0, 0, 0, 0.55)');
-    ctx.fillStyle = vig;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+    // ============ ВСПЫШКА УРОНА ============
     if (damageFlash > 0) {
         ctx.fillStyle = `rgba(180, 20, 20, ${damageFlash * 0.5})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
-    // ===== HUD =====
+    // ============ HUD ============
     document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
     document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
     document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
