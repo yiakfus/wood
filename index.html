@@ -97,9 +97,7 @@
 						touch-action: manipulation;
 						font-weight: bold;
 					}
-					const grassTile = new Image();
-					grassTile.src = 'https://yiakfus.github.io/wood/grass03.png';
-					}
+
 					#overlay button:active { background: #4a6a50; }
 				</style>
 			</head>
@@ -138,6 +136,7 @@
 					const WORLD_W = 2400;
 					const WORLD_H = 1600;
 					let ZOOM = 1.75;
+
 					
 					// ==== БАЛАНС ====
 					const RELOAD_TIME       = 10;
@@ -165,6 +164,12 @@
 					const hedgehog = { x: 1200, y: 980, radius: 12, hp: 3 };
 					const hunter   = { x: 1200, y: 800, radius: 18, hp: 3, target: null };
 					const campfire = { x: 1200, y: 865, radius: 26 };
+					const hedgehogImg = new Image();
+					let hedgehogLoaded = false;
+					hedgehogImg.onload  = () => { hedgehogLoaded = true;  console.log('Ёж загружен!'); };
+					hedgehogImg.onerror = () => { console.error('Ёж НЕ загрузился:', hedgehogImg.src); };
+					hedgehogImg.src = 'hedgehog.gif';
+
 					
 					let obstacles = [];
 					let bushes    = [];
@@ -745,6 +750,9 @@
 							}
 						});
 						
+						const grassTile = new Image();
+						grassTile.src = 'https://yiakfus.github.io/wood/grass03.png';
+						
 						const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
 						const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 2.5 * pulse);
 						fg.addColorStop(0, 'rgba(255, 200, 50, 0.95)');
@@ -869,20 +877,19 @@
 						
 						const hedHidden = isHedgehogHidden();
 						ctx.globalAlpha = hedHidden ? 0.4 : 1;
-						ctx.beginPath();
-						ctx.arc(hedgehog.x, hedgehog.y, hedgehog.radius, 0, Math.PI * 2);
-						ctx.fillStyle = '#8b5a2b';
-						ctx.fill();
-						ctx.strokeStyle = '#5a3a1b';
-						ctx.lineWidth = 2;
-						ctx.stroke();
-						for (let i = 0; i < 8; i++) {
-							const a = (i / 8) * Math.PI * 2;
+						const hedSize = 40;
+						if (hedgehogLoaded) {
+							ctx.drawImage(
+								hedgehogImg,
+								hedgehog.x - hedSize / 2,
+								hedgehog.y - hedSize / 2,
+								hedSize, hedSize
+							);
+						} else {
+							// Заглушка, пока картинка не загрузилась
 							ctx.beginPath();
-							ctx.arc(hedgehog.x + Math.cos(a) * (hedgehog.radius + 4),
-								hedgehog.y + Math.sin(a) * (hedgehog.radius + 4),
-								2.5, 0, Math.PI * 2);
-							ctx.fillStyle = '#3a2010';
+							ctx.arc(hedgehog.x, hedgehog.y, hedgehog.radius, 0, Math.PI * 2);
+							ctx.fillStyle = '#8b5a2b';
 							ctx.fill();
 						}
 						ctx.globalAlpha = 1;
