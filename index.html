@@ -67,7 +67,7 @@ canvas { display: block; background: #050a07; touch-action: none; }
 </div>
 <div id="overlay">
     <h1 id="ov-title">Ночная тайга</h1>
-    <p id="ov-text">Ёж бежит за пальцем или курсором. Заманивай волков в ямы: каждая убивает одного и автоматически восстанавливается после 5 убийств. Каждые 5 убийств — передышка. После каждой передышки сложность растёт. В кустах можно спрятаться. Деревья, камни и костёр блокируют выстрелы охотника. Волки выныривают из темноты — вдали видно только их глаза.</p>
+    <p id="ov-text">Ёж бежит за пальцем или курсором. Волки осторожны: держатся на расстоянии выстрела и ждут момента, чтобы напасть со спины. Заманивай их в ямы: каждая убивает одного и восстанавливается после 5 убийств. Каждые 5 убийств — передышка. В кустах можно спрятаться — тогда волки переключатся на охотника. Ёж — приманка: если волк заметил ежа, он забывает об охотнике.</p>
     <button id="ov-btn">СТАРТ</button>
 </div>
 
@@ -94,7 +94,7 @@ const ZOOM_LERP_SPEED = 3.5;
 const RELOAD_TIME       = 10;
 const SPAWN_INTERVAL    = 8;
 const WOLVES_PER_WAVE   = 2;
-const HUNTER_RANGE      = 280;   // ★ было 220 — увеличено
+const HUNTER_RANGE      = 280;
 const WOLF_SPEED        = 130;
 const ATTRACT_RADIUS    = 280;
 const HEDGEHOG_SPEED    = 170;
@@ -130,6 +130,23 @@ const DEATH_DURATION = 0.45;
 const VISIBLE_NEAR_FIRE     = 260;
 const VISIBLE_NEAR_HEDGEHOG = 220;
 
+// ===== УМНЫЕ ВОЛКИ =====
+const WOLF_SAFE_DIST      = 320;
+const WOLF_CIRCLE_DIST    = 340;
+const WOLF_STRIKE_DIST    = 180;
+const WOLF_STRIKE_ANGLE   = 100 * Math.PI / 180;
+const WOLF_RETREAT_MIN    = 150;
+const WOLF_PATIENCE       = 6;
+const WOLF_CIRCLE_SPEED   = 1.0;
+const WOLF_STRIKE_SPEED   = 1.4;
+const WOLF_COMMIT_SPEED   = 1.15;
+const WOLF_APPROACH_JITTER = 0.4;
+
+// ===== ОХОТНИК: КОНУС И ПОВОРОТ =====
+const HUNTER_TARGET_CONE  = 70 * Math.PI / 180;
+const HUNTER_TURN_SPEED   = Math.PI * 2;
+const HUNTER_TURN_DELAY   = 0.4;
+
 // ===== ПОВОРОТЫ СПРАЙТОВ =====
 const ROT_OFFSET_HEDGEHOG = -Math.PI / 2;
 const ROT_OFFSET_WOLF     = -Math.PI / 2;
@@ -157,7 +174,7 @@ for (const key in SPRITES) {
 ctx.imageSmoothingEnabled = false;
 
 const hedgehog = { x: 1200, y: 980, radius: 12, hp: 3, angle: Math.PI / 2 };
-const hunter   = { x: 1200, y: 800, radius: 18, hp: 3, target: null, angle: Math.PI / 2 };
+const hunter   = { x: 1200, y: 800, radius: 18, hp: 3, target: null, angle: Math.PI / 2, turnDelay: 0 };
 const campfire = { x: 1200, y: 865, radius: 26 };
 
 let obstacles = [];
@@ -223,6 +240,24 @@ function isHedgehogHidden() { return bushes.some(b => dist(hedgehog, b) < b.r); 
 function isWolfVisible(w) {
     return dist(w, campfire) < VISIBLE_NEAR_FIRE ||
            dist(w, hedgehog) < VISIBLE_NEAR_HEDGEHOG;
+}
+
+// ===== УГЛЫ =====
+function angleFromHunterTo(px, py) {
+    const dx = px - hunter.x, dy = py - hunter.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.001) return 0;
+    const targetAngle = Math.atan2(dy, dx);
+    let diff = targetAngle - hunter.angle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    return Math.abs(diff);
+}
+function pointBehindHunter(r) {
+    return {
+        x: hunter.x + Math.cos(hunter.angle + Math.PI) * r,
+        y: hunter.y + Math.sin(hunter.angle + Math.PI) * r
+    };
 }
 
 // ===== ХЕЛПЕРЫ РИСОВАНИЯ =====
@@ -418,7 +453,7 @@ canvas.addEventListener('pointercancel', () => { mouseScreen = null; });
 function startGame() {
     resizeCanvas();
     hedgehog.x = 1200; hedgehog.y = 980; hedgehog.hp = 3; hedgehog.angle = Math.PI / 2;
-    hunter.hp = 3; hunter.target = null; hunter.angle = Math.PI / 2;
+    hunter.hp = 3; hunter.target = null; hunter.angle = Math.PI / 2; hunter.turnDelay = 0;
     wolves = []; sparks = []; bullets = []; fireParticles = []; damageFlash = 0;
     hearts = []; deathFx = [];
     fireSpawnAccum = 0;
@@ -496,10 +531,24 @@ function spawnWolf() {
         const y = clamp(hunter.y + Math.sin(angle) * d, 40, WORLD_H - 40);
         if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + 25)) continue;
         if (traps.some(t => t.active && Math.hypot(t.x - x, t.y - y) < t.r + 30)) continue;
-        wolves.push({ x, y, radius: 14, targetingHedgehog: false, state: 'hunt', searchTimer: 0, angle: Math.PI / 2 });
+        wolves.push({
+            x, y, radius: 14,
+            targetingHedgehog: false,
+            state: 'hunt',
+            searchTimer: 0,
+            angle: Math.PI / 2,
+            patienceT: 0
+        });
         return;
     }
-    wolves.push({ x: 100, y: 100, radius: 14, targetingHedgehog: false, state: 'hunt', searchTimer: 0, angle: Math.PI / 2 });
+    wolves.push({
+        x: 100, y: 100, radius: 14,
+        targetingHedgehog: false,
+        state: 'hunt',
+        searchTimer: 0,
+        angle: Math.PI / 2,
+        patienceT: 0
+    });
 }
 function rayCircle(ox, oy, dx, dy, cx, cy, r) {
     const fx = ox - cx, fy = oy - cy;
@@ -598,54 +647,211 @@ function checkBushEntry() {
     const hidden = isHedgehogHidden();
     if (hidden && !hedgehogWasHidden) {
         wolves.forEach(w => {
-            if (w.state === 'hunt' && w.targetingHedgehog && dist(w, hedgehog) > 60) {
+            if ((w.state === 'hunt' || w.state === 'chase_hedgehog') && w.targetingHedgehog && dist(w, hedgehog) > 60) {
                 w.state = 'search'; w.searchTimer = SEARCH_TIME;
             }
         });
     }
     hedgehogWasHidden = hidden;
 }
+
+// ===== УМНЫЕ ВОЛКИ =====
 function updateWolves(dt) {
     const hidden = isHedgehogHidden();
-    const speed = getWolfSpeed();
+    const baseSpeed = getWolfSpeed();
+
     wolves.forEach(wolf => {
         if (wolf.state === 'dying') {
             wolf.deathT += dt;
             return;
         }
-        const dH = dist(wolf, hedgehog), dHunt = dist(wolf, hunter);
+
+        if (wolf.patienceT === undefined) wolf.patienceT = 0;
+
+        const dH = dist(wolf, hedgehog);
+        const dHunt = dist(wolf, hunter);
+
+        // === ПЕРЕДЫШКА ===
         if (breakTimer > 0) {
             wolf.state = 'flee'; wolf.targetingHedgehog = false;
             const dxF = wolf.x - hunter.x, dyF = wolf.y - hunter.y;
             const dF = Math.hypot(dxF, dyF);
             if (dF > 0) {
-                wolf.x += (dxF / dF) * speed * FLEE_SPEED_MULT * dt;
-                wolf.y += (dyF / dF) * speed * FLEE_SPEED_MULT * dt;
+                wolf.x += (dxF / dF) * baseSpeed * FLEE_SPEED_MULT * dt;
+                wolf.y += (dyF / dF) * baseSpeed * FLEE_SPEED_MULT * dt;
                 wolf.angle = Math.atan2(dyF, dxF);
             }
             resolveObstacles(wolf);
             if (dF > FLEE_DESPAWN_DIST) wolf.dead = true;
             return;
         }
-        if (dH < wolf.radius + hedgehog.radius && !hidden) { hedgehog.hp -= 1; killWolf(wolf); damageFlash = 0.4; return; }
-        if (dHunt < wolf.radius + hunter.radius) { hunter.hp -= 1; killWolf(wolf); damageFlash = 0.4; return; }
+
+        // === КОНТАКТНЫЕ АТАКИ ===
+        if (dH < wolf.radius + hedgehog.radius && !hidden) {
+            hedgehog.hp -= 1; damageFlash = 0.4;
+            killWolf(wolf);
+            return;
+        }
+        if (dHunt < wolf.radius + hunter.radius) {
+            hunter.hp -= 1; damageFlash = 0.4;
+            killWolf(wolf);
+            return;
+        }
+
+        // === ПОИСК ===
         if (wolf.state === 'search') {
             wolf.searchTimer -= dt;
             if (wolf.searchTimer <= 0) wolf.state = 'hunt';
             return;
         }
-        let target;
-        if (hidden && dH > 60) { wolf.targetingHedgehog = false; target = hunter; }
-        else if (dH < ATTRACT_RADIUS) { wolf.targetingHedgehog = true; target = hedgehog; }
-        else { wolf.targetingHedgehog = false; target = hunter; }
-        const dx = target.x - wolf.x, dy = target.y - wolf.y;
-        const dd = Math.hypot(dx, dy);
-        if (dd > 0) {
-            wolf.x += (dx / dd) * speed * dt;
-            wolf.y += (dy / dd) * speed * dt;
-            wolf.angle = Math.atan2(dy, dx);
+
+        // === 1. ПРИОРИТЕТ ЕЖА ===
+        const canChaseHedgehog = !hidden && dH < ATTRACT_RADIUS;
+        if (canChaseHedgehog && wolf.state !== 'strike' && wolf.state !== 'commit') {
+            wolf.state = 'chase_hedgehog';
+            wolf.targetingHedgehog = true;
+            wolf.patienceT = 0;
+
+            const dx = hedgehog.x - wolf.x, dy = hedgehog.y - wolf.y;
+            const dd = Math.hypot(dx, dy);
+            if (dd > 0) {
+                wolf.x += (dx / dd) * baseSpeed * dt;
+                wolf.y += (dy / dd) * baseSpeed * dt;
+                wolf.angle = Math.atan2(dy, dx);
+            }
+            resolveObstacles(wolf);
+            traps.forEach(trap => {
+                if (trap.active && dist(wolf, trap) < trap.r) {
+                    trap.active = false;
+                    killWolf(wolf, true);
+                }
+            });
+            return;
         }
+
+        if (wolf.state === 'chase_hedgehog') {
+            wolf.state = 'hunt';
+            wolf.targetingHedgehog = false;
+        }
+
+        // === 2. ЛОГИКА ОХОТЫ НА ОХОТНИКА ===
+        const angleToWolf = angleFromHunterTo(wolf.x, wolf.y);
+        const inCone = angleToWolf < HUNTER_TARGET_CONE;
+        const isBehind = angleToWolf > WOLF_STRIKE_ANGLE;
+
+        // --- RETREAT ---
+        if (inCone && dHunt < WOLF_SAFE_DIST && dHunt > WOLF_RETREAT_MIN) {
+            wolf.state = 'retreat';
+            const awayX = wolf.x - hunter.x, awayY = wolf.y - hunter.y;
+            const awayLen = Math.hypot(awayX, awayY) || 1;
+            const nx = awayX / awayLen, ny = awayY / awayLen;
+            const perpX = -ny, perpY = nx;
+            const perpDot = Math.cos(hunter.angle) * perpX + Math.sin(hunter.angle) * perpY;
+            const sideSign = perpDot > 0 ? -1 : 1;
+
+            const rx = nx * 0.7 + perpX * sideSign * 0.7;
+            const ry = ny * 0.7 + perpY * sideSign * 0.7;
+            const rlen = Math.hypot(rx, ry) || 1;
+
+            wolf.x += (rx / rlen) * baseSpeed * dt;
+            wolf.y += (ry / rlen) * baseSpeed * dt;
+            wolf.angle = Math.atan2(ry, rx);
+            resolveObstacles(wolf);
+
+            wolf.patienceT += dt;
+            if (wolf.patienceT > WOLF_PATIENCE) {
+                wolf.state = 'commit';
+                wolf.patienceT = 0;
+            }
+            return;
+        }
+
+        // --- STRIKE ---
+        if (isBehind && dHunt < WOLF_STRIKE_DIST) {
+            wolf.state = 'strike';
+            const dx = hunter.x - wolf.x, dy = hunter.y - wolf.y;
+            const dd = Math.hypot(dx, dy);
+            if (dd > 0) {
+                wolf.x += (dx / dd) * baseSpeed * WOLF_STRIKE_SPEED * dt;
+                wolf.y += (dy / dd) * baseSpeed * WOLF_STRIKE_SPEED * dt;
+                wolf.angle = Math.atan2(dy, dx);
+            }
+            resolveObstacles(wolf);
+            wolf.patienceT = 0;
+            return;
+        }
+
+        // --- COMMIT ---
+        if (wolf.state === 'commit') {
+            const dx = hunter.x - wolf.x, dy = hunter.y - wolf.y;
+            const dd = Math.hypot(dx, dy);
+            if (dd > 0) {
+                wolf.x += (dx / dd) * baseSpeed * WOLF_COMMIT_SPEED * dt;
+                wolf.y += (dy / dd) * baseSpeed * WOLF_COMMIT_SPEED * dt;
+                wolf.angle = Math.atan2(dy, dx);
+            }
+            resolveObstacles(wolf);
+            return;
+        }
+
+        // --- APPROACH ---
+        if (dHunt > WOLF_SAFE_DIST) {
+            wolf.state = 'approach';
+            const jitter = (Math.random() - 0.5) * 2 * WOLF_APPROACH_JITTER;
+            const behind = pointBehindHunter(WOLF_CIRCLE_DIST);
+            const cosA = Math.cos(jitter), sinA = Math.sin(jitter);
+            const vx = behind.x - hunter.x, vy = behind.y - hunter.y;
+            const jx = vx * cosA - vy * sinA;
+            const jy = vx * sinA + vy * cosA;
+            const tx = hunter.x + jx;
+            const ty = hunter.y + jy;
+
+            const dx = tx - wolf.x, dy = ty - wolf.y;
+            const dd = Math.hypot(dx, dy);
+            if (dd > 8) {
+                wolf.x += (dx / dd) * baseSpeed * dt;
+                wolf.y += (dy / dd) * baseSpeed * dt;
+                wolf.angle = Math.atan2(dy, dx);
+            }
+            resolveObstacles(wolf);
+            wolf.patienceT = 0;
+            return;
+        }
+
+        // --- CIRCLE ---
+        wolf.state = 'circle';
+        const dxc = wolf.x - hunter.x, dyc = wolf.y - hunter.y;
+        const dc = Math.hypot(dxc, dyc) || 1;
+        const angleAround = Math.atan2(dyc, dxc);
+        const behindAngle = hunter.angle + Math.PI;
+        let diff = behindAngle - angleAround;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        const dirSign = diff > 0 ? 1 : -1;
+
+        const tangentX = -Math.sin(angleAround) * dirSign;
+        const tangentY = Math.cos(angleAround) * dirSign;
+        const radialError = dc - WOLF_CIRCLE_DIST;
+        const radialX = (dxc / dc) * radialError * 0.02;
+        const radialY = (dyc / dc) * radialError * 0.02;
+
+        const mvx = tangentX + radialX;
+        const mvy = tangentY + radialY;
+        const mlen = Math.hypot(mvx, mvy) || 1;
+
+        wolf.x += (mvx / mlen) * baseSpeed * WOLF_CIRCLE_SPEED * dt;
+        wolf.y += (mvy / mlen) * baseSpeed * WOLF_CIRCLE_SPEED * dt;
+        wolf.angle = Math.atan2(mvy, mvx);
         resolveObstacles(wolf);
+
+        if (!isBehind) wolf.patienceT += dt;
+        else wolf.patienceT = 0;
+
+        if (wolf.patienceT > WOLF_PATIENCE) {
+            wolf.state = 'commit';
+            wolf.patienceT = 0;
+        }
+
         traps.forEach(trap => {
             if (trap.active && dist(wolf, trap) < trap.r) {
                 trap.active = false;
@@ -653,6 +859,7 @@ function updateWolves(dt) {
             }
         });
     });
+
     separateWolves();
     wolves = wolves.filter(w => {
         if (w.dead) return false;
@@ -768,36 +975,67 @@ function updateFireParticles(dt) {
     fireParticles = fireParticles.filter(p => p.life > 0);
 }
 
+// ===== ОХОТНИК: КОНУС + ОГРАНИЧЕНИЕ ПОВОРОТА =====
 function updateHunter(dt) {
     if (reloadTimer > 0) { reloadTimer -= dt; if (reloadTimer <= 0) { ammo = 1; reloadTimer = 0; } }
+
+    const prevTarget = hunter.target;
     hunter.target = null;
+
     if (wolves.length > 0) {
         let best = null, bestScore = Infinity;
         wolves.forEach(w => {
             if (w.state === 'dying') return;
             const d = dist(w, hunter);
             if (d > HUNTER_RANGE) return;
+            if (angleFromHunterTo(w.x, w.y) > HUNTER_TARGET_CONE) return;
+
             let score;
             if (w.state === 'flee') score = d * 0.9;
             else if (w.state === 'search') score = d * 0.4;
+            else if (w.state === 'chase_hedgehog') score = d * 1.2;
+            else if (w.state === 'strike') score = d * 0.5;
+            else if (w.state === 'commit') score = d * 0.5;
             else if (w.targetingHedgehog) score = d;
             else score = d * 0.35;
             if (score < bestScore) { bestScore = score; best = w; }
         });
         hunter.target = best;
-        const aim = (best && !best.dead) ? best : hedgehog;
-        hunter.angle = Math.atan2(aim.y - hunter.y, aim.x - hunter.x);
-        if (best && ammo > 0 && !best.dead) {
-            const block = getLOSBlock(hunter, best);
+    }
+
+    if (hunter.target !== prevTarget) {
+        hunter.turnDelay = HUNTER_TURN_DELAY;
+    }
+    if (hunter.turnDelay > 0) hunter.turnDelay -= dt;
+
+    let aimAngle;
+    if (hunter.target && !hunter.target.dead && hunter.target.state !== 'dying') {
+        aimAngle = Math.atan2(hunter.target.y - hunter.y, hunter.target.x - hunter.x);
+    } else {
+        aimAngle = Math.atan2(hedgehog.y - hunter.y, hedgehog.x - hunter.x);
+    }
+
+    if (hunter.turnDelay > 0) {
+        let diff = aimAngle - hunter.angle;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        const maxStep = HUNTER_TURN_SPEED * dt;
+        if (Math.abs(diff) > maxStep) diff = Math.sign(diff) * maxStep;
+        hunter.angle += diff;
+    } else {
+        hunter.angle = aimAngle;
+    }
+
+    if (hunter.target && ammo > 0 && !hunter.target.dead) {
+        if (angleFromHunterTo(hunter.target.x, hunter.target.y) < HUNTER_TARGET_CONE * 0.8) {
+            const block = getLOSBlock(hunter, hunter.target);
             if (block) {
                 sparks.push({ x: block.x, y: block.y, ttl: 0.5, maxTtl: 0.5 });
             } else {
-                fireBullet(best);
+                fireBullet(hunter.target);
             }
             ammo = 0; reloadTimer = RELOAD_TIME;
         }
-    } else {
-        hunter.angle = Math.atan2(hedgehog.y - hunter.y, hedgehog.x - hunter.x);
     }
 }
 function updateSparks(dt) { sparks.forEach(s => s.ttl -= dt); sparks = sparks.filter(s => s.ttl > 0); }
@@ -861,6 +1099,7 @@ function draw() {
 
     ctx.restore();
 
+    // ===== ТЬМА =====
     const cx = (campfire.x - cam.x) * ZOOM;
     const cy = (campfire.y - cam.y) * ZOOM;
     const litR = 200 * ZOOM;
@@ -902,25 +1141,32 @@ function draw() {
             let tint;
             if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
             else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
-            else if (w.targetingHedgehog) tint = 'rgba(220, 120, 40, 0.28)';
+            else if (w.state === 'strike' || w.state === 'commit') tint = 'rgba(255, 40, 40, 0.45)';
+            else if (w.state === 'chase_hedgehog') tint = 'rgba(220, 120, 40, 0.32)';
+            else if (w.state === 'retreat' || w.state === 'circle' || w.state === 'approach') tint = 'rgba(200, 180, 60, 0.25)';
             else tint = 'rgba(200, 30, 30, 0.28)';
             ctx.beginPath();
             ctx.arc(w.x, w.y, 26, 0, Math.PI * 2);
             ctx.fillStyle = tint;
             ctx.fill();
             drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
+            // маркеры состояний
             if (w.state === 'search') {
                 ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace';
                 ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 34);
             } else if (w.state === 'flee') {
                 ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace';
                 ctx.textAlign = 'center'; ctx.fillText('»', w.x, w.y - 34);
+            } else if (w.state === 'strike' || w.state === 'commit') {
+                ctx.fillStyle = '#ff4444'; ctx.font = 'bold 20px monospace';
+                ctx.textAlign = 'center'; ctx.fillText('!', w.x, w.y - 34);
             }
         } else {
             if (w.state !== 'flee') drawWolfEyes(w);
         }
     });
 
+    // ===== ПЕРСОНАЖИ =====
     const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
     const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4.5 * pulse);
     fg.addColorStop(0, 'rgba(255, 200, 50, 0.55)');
@@ -1081,6 +1327,7 @@ function draw() {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
+    // ===== HUD =====
     document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
     document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
     document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
