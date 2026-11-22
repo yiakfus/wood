@@ -67,7 +67,7 @@ canvas { display: block; background: #050a07; touch-action: none; }
 </div>
 <div id="overlay">
     <h1 id="ov-title">Ночная тайга</h1>
-    <p id="ov-text">Ёж бежит за пальцем или курсором. Заманивай волков в ямы: каждая убивает одного и автоматически восстанавливается после 5 убийств. Каждые 5 убийств — передышка. После каждой передышки сложность растёт. В кустах можно спрятаться. Деревья, камни и костёр блокируют выстрелы охотника.</p>
+    <p id="ov-text">Ёж бежит за пальцем или курсором. Заманивай волков в ямы: каждая убивает одного и автоматически восстанавливается после 5 убийств. Каждые 5 убийств — передышка. После каждой передышки сложность растёт. В кустах можно спрятаться. Деревья, камни и костёр блокируют выстрелы охотника. Волки выныривают из темноты — вдали видно только их глаза.</p>
     <button id="ov-btn">СТАРТ</button>
 </div>
 
@@ -107,8 +107,11 @@ const MIN_SPAWN_INTERVAL     = 4;
 const DIFFICULTY_SPAWN_STEP  = 0.5;
 const DIFFICULTY_SPEED_STEP  = 5;
 
+// ===== ВИДИМОСТЬ ВОЛКОВ (world-unit) =====
+const VISIBLE_NEAR_FIRE     = 260;  // радиус видимости от костра
+const VISIBLE_NEAR_HEDGEHOG = 220;  // радиус «фонарика» ежа
+
 // ===== ПОВОРОТЫ СПРАЙТОВ =====
-// Если персонаж смотрит не туда: -π/2 (вниз), 0 (вправо), +π/2 (вверх), π (влево)
 const ROT_OFFSET_HEDGEHOG = -Math.PI / 2;
 const ROT_OFFSET_WOLF     = -Math.PI / 2;
 const ROT_OFFSET_HUNTER   = -Math.PI / 2;
@@ -163,7 +166,6 @@ let mouseScreen = null;
 let lastTime = performance.now();
 let damageFlash = 0;
 
-// ===== СВЕТЛЯЧКИ =====
 const fireflies = [];
 for (let i = 0; i < 45; i++) {
     fireflies.push({
@@ -194,6 +196,12 @@ function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
 function randRange(a, b) { return a + Math.random() * (b - a); }
 function isHedgehogHidden() { return bushes.some(b => dist(hedgehog, b) < b.r); }
+
+// ===== ВИДИМОСТЬ ВОЛКА =====
+function isWolfVisible(w) {
+    return dist(w, campfire) < VISIBLE_NEAR_FIRE ||
+           dist(w, hedgehog) < VISIBLE_NEAR_HEDGEHOG;
+}
 
 // ===== ХЕЛПЕРЫ РИСОВАНИЯ =====
 function drawSprite(key, x, y, sizeOverride) {
@@ -229,6 +237,31 @@ function drawShadow(x, y, radius, opacity = 0.4) {
     ctx.ellipse(x, y + radius * 0.55, radius * 0.95, radius * 0.35, 0, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(0, 0, 0, ${opacity})`;
     ctx.fill();
+}
+
+// ===== ГЛАЗА ВОЛКА В ТЕМНОТЕ =====
+function drawWolfEyes(w) {
+    const eyeDist = 10;
+    const eyeSpread = 6;
+    const perp = w.angle + Math.PI / 2;
+    for (const sign of [1, -1]) {
+        const ex = w.x + Math.cos(w.angle) * eyeDist + Math.cos(perp) * eyeSpread * sign;
+        const ey = w.y + Math.sin(w.angle) * eyeDist + Math.sin(perp) * eyeSpread * sign;
+        // Свечение вокруг глаза
+        ctx.beginPath();
+        ctx.arc(ex, ey, 7, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 40, 20, 0.22)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(ex, ey, 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 60, 30, 0.5)';
+        ctx.fill();
+        // Яркий центр
+        ctx.beginPath();
+        ctx.arc(ex, ey, 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff3322';
+        ctx.fill();
+    }
 }
 
 // ===== CANVAS =====
@@ -281,8 +314,7 @@ function generateWorld() {
         }
     }
 
-    // 6 ближних кустов (220–380 от костра)
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 6; i++) {
         for (let tries = 0; tries < 100; tries++) {
             const angle = Math.random() * Math.PI * 2;
             const dR = randRange(220, 380);
@@ -297,7 +329,6 @@ function generateWorld() {
             break;
         }
     }
-    // 8 кустов в остальном мире
     for (let i = 0; i < 8; i++) {
         for (let tries = 0; tries < 40; tries++) {
             const x = randRange(80, WORLD_W - 80);
@@ -457,10 +488,8 @@ function getLOSBlock(from, to) {
     return best;
 }
 
-// ===== УБИЙСТВО + АВТО-ПЕРЕЗАРЯДКА ЛОВУШЕК + ПЕРЕДЫШКА =====
 function registerKill() {
     kills++;
-
     if (traps.some(t => !t.active)) {
         killsSinceReload++;
         if (killsSinceReload >= TRAP_RELOAD_KILLS) {
@@ -468,7 +497,6 @@ function registerKill() {
             killsSinceReload = 0;
         }
     }
-
     if (breakTimer <= 0) {
         killsSinceBreak++;
         if (killsSinceBreak >= BREAK_KILLS) {
@@ -598,6 +626,7 @@ function draw() {
     ctx.fillStyle = '#050a07';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    // ============ МИР ДО ТЬМЫ ============
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -643,11 +672,11 @@ function draw() {
 
     ctx.restore();
 
-    // ===== СЛОЙ ТЬМЫ =====
+    // ============ СЛОЙ ТЬМЫ ============
     const cx = (campfire.x - cam.x) * ZOOM;
     const cy = (campfire.y - cam.y) * ZOOM;
     const litR = 200 * ZOOM;
-    const darkR = 600 * ZOOM;
+    const darkR = 550 * ZOOM;
 
     const darkGrad = ctx.createRadialGradient(cx, cy, litR, cx, cy, darkR);
     darkGrad.addColorStop(0, 'rgba(5, 10, 25, 0)');
@@ -657,7 +686,7 @@ function draw() {
     ctx.fillStyle = darkGrad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ===== ФОНАРИК ЕЖА =====
+    // ============ ФОНАРИК ЕЖА ============
     const hx = (hedgehog.x - cam.x) * ZOOM;
     const hy = (hedgehog.y - cam.y) * ZOOM;
     const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300);
@@ -667,11 +696,48 @@ function draw() {
     ctx.fillStyle = hGrad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ===== ПЕРСОНАЖИ (поверх тьмы) =====
+    // ============ ВОЛКИ: видимость зависит от освещения ============
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
 
+    wolves.forEach(w => {
+        const visible = isWolfVisible(w);
+
+        if (visible) {
+            // Полный волк
+            drawShadow(w.x, w.y + 8, 18);
+
+            let tint;
+            if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
+            else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
+            else if (w.targetingHedgehog) tint = 'rgba(220, 120, 40, 0.28)';
+            else tint = 'rgba(200, 30, 30, 0.28)';
+            ctx.beginPath();
+            ctx.arc(w.x, w.y, 26, 0, Math.PI * 2);
+            ctx.fillStyle = tint;
+            ctx.fill();
+
+            drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
+
+            if (w.state === 'search') {
+                ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace';
+                ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 34);
+            } else if (w.state === 'flee') {
+                ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace';
+                ctx.textAlign = 'center'; ctx.fillText('»', w.x, w.y - 34);
+            }
+        } else {
+            // В темноте: только светящиеся глаза
+            // Убегающий волк не светит глазами — он ушёл
+            if (w.state !== 'flee') {
+                drawWolfEyes(w);
+            }
+        }
+    });
+
+    // ============ ПЕРСОНАЖИ (всегда поверх тьмы) ============
+    // Glow костра
     const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
     const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4.5 * pulse);
     fg.addColorStop(0, 'rgba(255, 200, 50, 0.55)');
@@ -682,6 +748,7 @@ function draw() {
     ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2);
     ctx.fill();
 
+    // Охотник
     drawShadow(hunter.x, hunter.y + 12, 22);
     drawRotatedSprite('hunter', hunter.x, hunter.y, hunter.angle + ROT_OFFSET_HUNTER, SPRITES.hunter.size);
     ctx.save();
@@ -737,34 +804,13 @@ function draw() {
         ctx.fillText('⏳ ' + reloadTimer.toFixed(1), hunter.x, hunter.y - 46);
     }
 
-    wolves.forEach(w => {
-        drawShadow(w.x, w.y + 8, 18);
-        let tint = null;
-        if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
-        else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
-        else if (w.targetingHedgehog) tint = 'rgba(220, 120, 40, 0.28)';
-        else tint = 'rgba(200, 30, 30, 0.28)';
-        ctx.beginPath();
-        ctx.arc(w.x, w.y, 26, 0, Math.PI * 2);
-        ctx.fillStyle = tint;
-        ctx.fill();
-
-        drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
-
-        if (w.state === 'search') {
-            ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace';
-            ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 34);
-        } else if (w.state === 'flee') {
-            ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace';
-            ctx.textAlign = 'center'; ctx.fillText('»', w.x, w.y - 34);
-        }
-    });
-
+    // Ёж
     drawShadow(hedgehog.x, hedgehog.y + 8, 16);
     ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
     drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
     ctx.globalAlpha = 1;
 
+    // Искры
     sparks.forEach(s => {
         const a = s.ttl / s.maxTtl;
         ctx.fillStyle = 'rgba(255, 220, 100, ' + a + ')';
@@ -773,6 +819,7 @@ function draw() {
         ctx.beginPath(); ctx.arc(s.x, s.y, 2 + (1 - a) * 4, 0, Math.PI * 2); ctx.fill();
     });
 
+    // Маркер цели
     if (mouseScreen && gameState === 'playing') {
         const ttx = mouseScreen.x / ZOOM + cam.x;
         const tty = mouseScreen.y / ZOOM + cam.y;
@@ -784,6 +831,7 @@ function draw() {
         }
     }
 
+    // Светлячки
     const time = performance.now() / 1000;
     fireflies.forEach(f => {
         const fx = f.x + Math.sin(time * f.speed + f.phase) * 25;
@@ -797,11 +845,13 @@ function draw() {
 
     ctx.restore();
 
+    // ============ ВСПЫШКА УРОНА ============
     if (damageFlash > 0) {
         ctx.fillStyle = `rgba(180, 20, 20, ${damageFlash * 0.5})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
+    // ============ HUD ============
     document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
     document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
     document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
