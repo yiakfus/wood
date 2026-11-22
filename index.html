@@ -144,6 +144,14 @@ const ROT_OFFSET_WOLF     = -Math.PI / 2;
 const ROT_OFFSET_HUNTER   = -Math.PI / 2;
 const WIN_KILLS = 25;
 
+// ★ Новые константы для псевдоизометрии
+const TREE_TRUNK_BASE_W = 60;   // ширина ствола в спрайте
+const TREE_TRUNK_BASE_H = 140;  // высота ствола
+const TREE_CROWN_BASE = 160;    // размер кроны
+const DEPTH_SCALE_MIN = 0.85;   // дальние объекты
+const DEPTH_SCALE_MAX = 1.15;   // ближние
+const DEPTH_OFFSET_MAX = 20;    // смещение по Y
+
 const DIFFICULTIES = {
     easy: {
         label: 'Лёгкий',
@@ -151,8 +159,7 @@ const DIFFICULTIES = {
         wolfStrikeDist: 180, wolfStrikeSpeed: 1.25,
         spawnInterval: 10, wolvesPerWave: 1, maxWolvesPerWave: 5,
         hunterRange: 300, hunterTurnSpeed: Math.PI * 3, hunterTurnDelay: 0.2,
-        heartDropChance: 0.30,
-        postBiteBehavior: 'despawn',
+        heartDropChance: 0.30, postBiteBehavior: 'despawn',
         recordKey: 'nightTaigaRecord_easy'
     },
     normal: {
@@ -161,8 +168,7 @@ const DIFFICULTIES = {
         wolfStrikeDist: 180, wolfStrikeSpeed: 1.4,
         spawnInterval: 8, wolvesPerWave: 2, maxWolvesPerWave: 6,
         hunterRange: 280, hunterTurnSpeed: Math.PI * 2, hunterTurnDelay: 0.4,
-        heartDropChance: 0.20,
-        postBiteBehavior: 'despawn',
+        heartDropChance: 0.20, postBiteBehavior: 'despawn',
         recordKey: 'nightTaigaRecord_normal'
     },
     hard: {
@@ -171,8 +177,7 @@ const DIFFICULTIES = {
         wolfStrikeDist: 180, wolfStrikeSpeed: 1.5,
         spawnInterval: 7, wolvesPerWave: 2, maxWolvesPerWave: 7,
         hunterRange: 260, hunterTurnSpeed: Math.PI * 1.5, hunterTurnDelay: 0.6,
-        heartDropChance: 0.15,
-        postBiteBehavior: 'wait',
+        heartDropChance: 0.15, postBiteBehavior: 'wait',
         recordKey: 'nightTaigaRecord_hard'
     }
 };
@@ -185,7 +190,8 @@ const SPRITES = {
     wolf:     { path: 'https://yiakfus.github.io/wood/asset/sprites/wolf.png',     size: 90,  loaded: false },
     hunter:   { path: 'https://yiakfus.github.io/wood/asset/sprites/hunter.png',   size: 60,  loaded: false },
     campfire: { path: 'https://yiakfus.github.io/wood/asset/sprites/campfire.png', size: 72,  loaded: false },
-    tree:     { path: 'https://yiakfus.github.io/wood/asset/sprites/tree.png',     size: 96,  loaded: false },
+    tree_trunk_1: { path: 'https://yiakfus.github.io/wood/asset/sprites/tree_trunk_1.png', size: 140, loaded: false },
+    tree_crown_1: { path: 'https://yiakfus.github.io/wood/asset/sprites/tree_crown_1.png', size: 160, loaded: false },
     rock:     { path: 'https://yiakfus.github.io/wood/asset/sprites/rock.png',     size: 56,  loaded: false },
     bush:     { path: 'https://yiakfus.github.io/wood/asset/sprites/bush.png',     size: 140, loaded: false },
     trap:     { path: 'https://yiakfus.github.io/wood/asset/sprites/trap.png',     size: 96,  loaded: false },
@@ -293,11 +299,36 @@ function setRecord(v) {
     if (v > prev) localStorage.setItem(D.recordKey, v);
 }
 
+// ★ Смещение планов для статических объектов (деревья, камни)
+function depthScale(y) {
+    const k = clamp(y / WORLD_H, 0, 1);
+    return DEPTH_SCALE_MIN + k * (DEPTH_SCALE_MAX - DEPTH_SCALE_MIN);
+}
+function depthOffsetY(y) {
+    const k = clamp(y / WORLD_H, 0, 1);
+    return (k - 0.5) * DEPTH_OFFSET_MAX * 2;
+}
+
+// ===== ХЕЛПЕРЫ РИСОВАНИЯ =====
 function drawSprite(key, x, y, sizeOverride) {
     const s = SPRITES[key];
     const size = sizeOverride || s.size;
     if (s.loaded) ctx.drawImage(s.img, x - size/2, y - size/2, size, size);
     else { ctx.beginPath(); ctx.arc(x, y, size * 0.35, 0, Math.PI * 2); ctx.fillStyle = '#444'; ctx.fill(); }
+}
+// ★ Рисует спрайт с привязкой НИЗ-ЦЕНТР
+function drawSpriteBottom(key, x, bottomY, width, alpha = 1) {
+    const s = SPRITES[key];
+    if (!s.loaded) {
+        ctx.beginPath(); ctx.arc(x, bottomY, width * 0.35, 0, Math.PI * 2); ctx.fillStyle = '#444'; ctx.fill();
+        return;
+    }
+    const ratio = s.img.height / s.img.width;
+    const h = width * ratio;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(s.img, x - width/2, bottomY - h, width, h);
+    ctx.restore();
 }
 function drawRotatedSprite(key, x, y, angle, sizeOverride, alpha = 1) {
     const s = SPRITES[key];
@@ -1072,6 +1103,8 @@ function updateCamera(dt) {
 function draw() {
     ctx.fillStyle = '#050a07';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // ===== ФОН: ТРАВА (плоская, без сортировки) =====
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1079,119 +1112,12 @@ function draw() {
     for (let x = 0; x < WORLD_W; x += ts) {
         for (let y = 0; y < WORLD_H; y += ts) drawSprite('grass', x + ts/2, y + ts/2, ts);
     }
-    bushes.forEach(b => drawSprite('bush', b.x, b.y, b.r * 2.3));
-    traps.forEach(trap => {
-        drawSprite('trap', trap.x, trap.y, trap.r * 2.1);
-        if (!trap.active) {
-            ctx.beginPath(); ctx.arc(trap.x, trap.y, trap.r, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(50, 35, 18, 0.55)'; ctx.fill();
-        }
-        ctx.fillStyle = trap.active ? '#d4b070' : '#b09060';
-        ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
-        ctx.fillText(trap.active ? 'готово' : (Math.min(TRAP_RELOAD_KILLS, killsSinceReload) + '/' + TRAP_RELOAD_KILLS), trap.x, trap.y + 5);
-    });
-    obstacles.forEach(o => {
-        drawShadow(o.x, o.y + o.r * 0.4, o.r * 1.1);
-        if (o.type === 'tree') drawSprite('tree', o.x, o.y, o.r * 2.9);
-        else drawSprite('rock', o.x, o.y, o.r * 2.1);
-    });
-    drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
-    ctx.beginPath();
-    ctx.arc(hedgehog.x, hedgehog.y, ATTRACT_RADIUS, 0, Math.PI * 2);
-    ctx.setLineDash([6, 8]); ctx.strokeStyle = 'rgba(210, 105, 30, 0.12)';
-    ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
     ctx.restore();
 
-    const cx = (campfire.x - cam.x) * ZOOM, cy = (campfire.y - cam.y) * ZOOM;
-    const litR = 200 * ZOOM, darkR = 550 * ZOOM;
-    const darkGrad = ctx.createRadialGradient(cx, cy, litR, cx, cy, darkR);
-    darkGrad.addColorStop(0, 'rgba(5, 10, 25, 0)');
-    darkGrad.addColorStop(0.4, 'rgba(4, 8, 20, 0.55)');
-    darkGrad.addColorStop(0.75, 'rgba(2, 4, 12, 0.9)');
-    darkGrad.addColorStop(1, 'rgba(0, 0, 0, 1)');
-    ctx.fillStyle = darkGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const hx = (hedgehog.x - cam.x) * ZOOM, hy = (hedgehog.y - cam.y) * ZOOM;
-    const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300 * (ZOOM / 2.2));
-    hGrad.addColorStop(0, 'rgba(255, 220, 150, 0.32)');
-    hGrad.addColorStop(0.5, 'rgba(255, 220, 150, 0.12)');
-    hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
-    ctx.fillStyle = hGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+    // ===== СВЕЧЕНИЕ КОСТРА (под всеми объектами) =====
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
-    wolves.forEach(w => {
-        if (w.state === 'dying') {
-            const t = w.deathT / DEATH_DURATION;
-            drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF + w.spin * t,
-                              SPRITES.wolf.size * (1 - t * 0.6), 1 - t);
-            return;
-        }
-        const visible = isWolfVisible(w);
-        if (visible) {
-            const isPostBite = (w.state === 'flee' && w.postBite);
-            if (isPostBite) {
-                // ★ Красно-пульсирующая аура
-                const puls = 0.5 + 0.5 * Math.sin(performance.now() * 0.02);
-                const auraR = 26 + puls * 8;
-                // заливка
-                ctx.beginPath();
-                ctx.arc(w.x, w.y, auraR, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(255, 40, 40, ${0.20 + puls * 0.30})`;
-                ctx.fill();
-                // кольцо
-                ctx.beginPath();
-                ctx.arc(w.x, w.y, auraR + 4, 0, Math.PI * 2);
-                ctx.strokeStyle = `rgba(255, 80, 80, ${0.35 + puls * 0.45})`;
-                ctx.lineWidth = 2;
-                ctx.stroke();
-                // тёмная тень под волком
-                drawShadow(w.x, w.y + 8, 18, 0.5);
-                // спрайт — через filter (тёмный), с fallback
-                ctx.save();
-                try {
-                    ctx.filter = 'brightness(0.25) saturate(0.4)';
-                } catch (e) {}
-                drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
-                ctx.restore();
-                // на всякий случай — полупрозрачный тёмный круг в центре
-                // (если filter не сработал, это даст хоть какой-то эффект)
-                ctx.save();
-                ctx.globalAlpha = 0.45;
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.beginPath();
-                ctx.arc(w.x, w.y, 18, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
-            } else {
-                // обычная аура
-                drawShadow(w.x, w.y + 8, 18);
-                let tint;
-                if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
-                else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
-                else if (w.state === 'strike' || w.state === 'commit') tint = 'rgba(255, 40, 40, 0.45)';
-                else if (w.state === 'chase_hedgehog') tint = 'rgba(220, 120, 40, 0.32)';
-                else if (w.state === 'retreat' || w.state === 'circle' || w.state === 'approach') tint = 'rgba(200, 180, 60, 0.25)';
-                else tint = 'rgba(200, 30, 30, 0.28)';
-                ctx.beginPath(); ctx.arc(w.x, w.y, 26, 0, Math.PI * 2); ctx.fillStyle = tint; ctx.fill();
-                drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
-            }
-            // маркеры состояний (у postBite — ничего)
-            if (w.state === 'search') {
-                ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
-                ctx.fillText('?', w.x, w.y - 34);
-            } else if (w.state === 'flee' && !w.postBite) {
-                ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
-                ctx.fillText('»', w.x, w.y - 34);
-            } else if (w.state === 'strike' || w.state === 'commit') {
-                ctx.fillStyle = '#ff4444'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
-                ctx.fillText('!', w.x, w.y - 34);
-            }
-        } else {
-            if (w.state !== 'flee') drawWolfEyes(w);
-        }
-    });
     const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
     const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4.5 * pulse);
     fg.addColorStop(0, 'rgba(255, 200, 50, 0.55)');
@@ -1199,7 +1125,65 @@ function draw() {
     fg.addColorStop(1, 'rgba(255, 80, 0, 0)');
     ctx.fillStyle = fg;
     ctx.beginPath(); ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
 
+    // ===== СОРТИРОВКА ОБЪЕКТОВ ПО Y =====
+    const drawables = [];
+    obstacles.forEach(o => drawables.push({ kind: 'obstacle', ref: o, y: o.y }));
+    bushes.forEach(b => drawables.push({ kind: 'bush', ref: b, y: b.y }));
+    traps.forEach(t => drawables.push({ kind: 'trap', ref: t, y: t.y }));
+    wolves.forEach(w => drawables.push({ kind: 'wolf', ref: w, y: w.y }));
+    drawables.push({ kind: 'hunter', ref: hunter, y: hunter.y });
+    drawables.sort((a, b) => a.y - b.y);
+
+    // ===== РИСУЕМ СОРТИРОВАННЫЕ ОБЪЕКТЫ =====
+    ctx.save();
+    ctx.scale(ZOOM, ZOOM);
+    ctx.translate(-cam.x, -cam.y);
+
+    drawables.forEach(d => {
+        if (d.kind === 'obstacle') {
+            const o = d.ref;
+            const scale = depthScale(o.y);
+            const offY = depthOffsetY(o.y);
+            if (o.type === 'tree') {
+                // ствол (привязка низ-центр)
+                const trunkW = o.r * 2.4 * scale;
+                drawSpriteBottom('tree_trunk_1', o.x, o.y + offY, trunkW);
+                // крона (привязка низ-центр на верхушке ствола)
+                const trunkH = trunkW * (TREE_TRUNK_BASE_H / TREE_TRUNK_BASE_W);
+                const crownW = o.r * 4.5 * scale;
+                drawSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW);
+            } else {
+                // камень — привязка центр
+                drawShadow(o.x, o.y + o.r * 0.4, o.r * 1.1);
+                drawSprite('rock', o.x, o.y + offY, o.r * 2.1 * scale);
+            }
+        }
+        else if (d.kind === 'bush') {
+            const b = d.ref;
+            drawSprite('bush', b.x, b.y, b.r * 2.3);
+        }
+        else if (d.kind === 'trap') {
+            const trap = d.ref;
+            drawSprite('trap', trap.x, trap.y, trap.r * 2.1);
+            if (!trap.active) {
+                ctx.beginPath(); ctx.arc(trap.x, trap.y, trap.r, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(50, 35, 18, 0.55)'; ctx.fill();
+            }
+            ctx.fillStyle = trap.active ? '#d4b070' : '#b09060';
+            ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+            ctx.fillText(trap.active ? 'готово' : (Math.min(TRAP_RELOAD_KILLS, killsSinceReload) + '/' + TRAP_RELOAD_KILLS), trap.x, trap.y + 5);
+        }
+        else if (d.kind === 'wolf') {
+            drawWolf(d.ref);
+        }
+        else if (d.kind === 'hunter') {
+            drawHunter();
+        }
+    });
+
+    // ===== ЧАСТИЦЫ / ЭФФЕКТЫ (поверх сортированных) =====
     hearts.forEach(h => {
         const bob = Math.sin(h.bobPhase) * 4;
         const alpha = h.life < 3 ? (h.life / 3) * 0.8 + 0.2 : 1;
@@ -1223,6 +1207,191 @@ function draw() {
         ctx.fillStyle = `hsla(${p.hue}, 100%, 55%, ${a * 0.25})`;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.size * a * 2.5, 0, Math.PI * 2); ctx.fill();
     });
+    bullets.forEach(b => {
+        if (b.trail.length > 1) {
+            for (let i = 0; i < b.trail.length - 1; i++) {
+                const t = b.trail[i], t2 = b.trail[i + 1];
+                const a = (i / b.trail.length) * 0.7;
+                ctx.strokeStyle = `rgba(255, 230, 120, ${a})`;
+                ctx.lineWidth = 1 + (i / b.trail.length) * 2;
+                ctx.beginPath(); ctx.moveTo(t.x, t.y); ctx.lineTo(t2.x, t2.y); ctx.stroke();
+            }
+        }
+        ctx.fillStyle = 'rgba(255, 250, 180, 0.95)';
+        ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255, 180, 60, 0.5)';
+        ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
+    });
+    sparks.forEach(s => {
+        const a = s.ttl / s.maxTtl;
+        ctx.fillStyle = 'rgba(255, 220, 100, ' + a + ')';
+        ctx.beginPath(); ctx.arc(s.x, s.y, 4 + (1 - a) * 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255, 120, 40, ' + (a * 0.7) + ')';
+        ctx.beginPath(); ctx.arc(s.x, s.y, 2 + (1 - a) * 4, 0, Math.PI * 2); ctx.fill();
+    });
+    if (mouseScreen && gameState === 'playing') {
+        const ttx = mouseScreen.x / ZOOM + cam.x, tty = mouseScreen.y / ZOOM + cam.y;
+        if (Math.hypot(ttx - hedgehog.x, tty - hedgehog.y) > 8) {
+            ctx.beginPath(); ctx.arc(ttx, tty, 4, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 200, 100, 0.7)'; ctx.lineWidth = 1.5; ctx.stroke();
+        }
+    }
+    const time = performance.now() / 1000;
+    fireflies.forEach(f => {
+        const fx = f.x + Math.sin(time * f.speed + f.phase) * 25;
+        const fy = f.y + Math.cos(time * f.speed * 0.7 + f.phase) * 18;
+        const alpha = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(time * 2.5 + f.phase));
+        ctx.fillStyle = `rgba(255, 200, 60, ${alpha * 0.25})`;
+        ctx.beginPath(); ctx.arc(fx, fy, f.radius * 4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = `rgba(255, 240, 150, ${alpha})`;
+        ctx.beginPath(); ctx.arc(fx, fy, f.radius, 0, Math.PI * 2); ctx.fill();
+    });
+
+    ctx.restore();
+
+    // ===== ЁЖ и КОСТЁР — всегда поверх деревьев, до тьмы =====
+    ctx.save();
+    ctx.scale(ZOOM, ZOOM);
+    ctx.translate(-cam.x, -cam.y);
+    // костёр спрайт (сам огонь)
+    drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
+    // ёж
+    drawShadow(hedgehog.x, hedgehog.y + 8, 16);
+    ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
+    drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    // ===== СЛОЙ ТЬМЫ =====
+    const cx = (campfire.x - cam.x) * ZOOM, cy = (campfire.y - cam.y) * ZOOM;
+    const litR = 200 * ZOOM, darkR = 550 * ZOOM;
+    const darkGrad = ctx.createRadialGradient(cx, cy, litR, cx, cy, darkR);
+    darkGrad.addColorStop(0, 'rgba(5, 10, 25, 0)');
+    darkGrad.addColorStop(0.4, 'rgba(4, 8, 20, 0.55)');
+    darkGrad.addColorStop(0.75, 'rgba(2, 4, 12, 0.9)');
+    darkGrad.addColorStop(1, 'rgba(0, 0, 0, 1)');
+    ctx.fillStyle = darkGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const hx = (hedgehog.x - cam.x) * ZOOM, hy = (hedgehog.y - cam.y) * ZOOM;
+    const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300 * (ZOOM / 2.2));
+    hGrad.addColorStop(0, 'rgba(255, 220, 150, 0.32)');
+    hGrad.addColorStop(0.5, 'rgba(255, 220, 150, 0.12)');
+    hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
+    ctx.fillStyle = hGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // ===== СИЛУЭТЫ КРОН В ТЕМНОТЕ =====
+    ctx.save();
+    ctx.scale(ZOOM, ZOOM);
+    ctx.translate(-cam.x, -cam.y);
+    ctx.globalAlpha = 0.15;
+    obstacles.forEach(o => {
+        if (o.type !== 'tree') return;
+        const scale = depthScale(o.y);
+        const offY = depthOffsetY(o.y);
+        const trunkW = o.r * 2.4 * scale;
+        const trunkH = trunkW * (TREE_TRUNK_BASE_H / TREE_TRUNK_BASE_W);
+        const crownW = o.r * 4.5 * scale;
+        // тёмный силуэт кроны
+        const s = SPRITES.tree_crown_1;
+        if (s.loaded) {
+            const ratio = s.img.height / s.img.width;
+            const h = crownW * ratio;
+            ctx.filter = 'brightness(0)';
+            ctx.drawImage(s.img, o.x - crownW/2, o.y + offY - trunkH - h, crownW, h);
+            ctx.filter = 'none';
+        }
+    });
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    // ===== ГЛАЗА ВОЛКОВ В ТЕМНОТЕ =====
+    ctx.save();
+    ctx.scale(ZOOM, ZOOM);
+    ctx.translate(-cam.x, -cam.y);
+    wolves.forEach(w => {
+        if (w.state === 'dying') return;
+        if (!isWolfVisible(w) && w.state !== 'flee') drawWolfEyes(w);
+    });
+    ctx.restore();
+
+    // ===== ВСПЫШКА УРОНА =====
+    if (damageFlash > 0) {
+        ctx.fillStyle = `rgba(180, 20, 20, ${damageFlash * 0.5})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // ===== HUD =====
+    document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
+    document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
+    document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
+    document.getElementById('kills').textContent      = kills;
+    difficultyEl.textContent = breakCount + ' (волков: ' + getWolvesPerWave() + ')';
+    if (breakTimer > 0 && gameState === 'playing') {
+        breakStatus.style.display = 'block';
+        breakTimeEl.textContent = breakTimer.toFixed(1);
+    } else breakStatus.style.display = 'none';
+}
+
+// ★ Рисует одного волка (вынесено для сортировки)
+function drawWolf(w) {
+    if (w.state === 'dying') {
+        const t = w.deathT / DEATH_DURATION;
+        drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF + w.spin * t,
+                          SPRITES.wolf.size * (1 - t * 0.6), 1 - t);
+        return;
+    }
+    const visible = isWolfVisible(w);
+    if (!visible) {
+        // глаза рисуются отдельным слоем после тьмы
+        return;
+    }
+    const isPostBite = (w.state === 'flee' && w.postBite);
+    if (isPostBite) {
+        const puls = 0.5 + 0.5 * Math.sin(performance.now() * 0.02);
+        const auraR = 26 + puls * 8;
+        ctx.beginPath();
+        ctx.arc(w.x, w.y, auraR, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 40, 40, ${0.20 + puls * 0.30})`;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(w.x, w.y, auraR + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 80, 80, ${0.35 + puls * 0.45})`;
+        ctx.lineWidth = 2; ctx.stroke();
+        drawShadow(w.x, w.y + 8, 18, 0.5);
+        ctx.save();
+        try { ctx.filter = 'brightness(0.25) saturate(0.4)'; } catch (e) {}
+        drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
+        ctx.restore();
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.beginPath(); ctx.arc(w.x, w.y, 18, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    } else {
+        drawShadow(w.x, w.y + 8, 18);
+        let tint;
+        if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
+        else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
+        else if (w.state === 'strike' || w.state === 'commit') tint = 'rgba(255, 40, 40, 0.45)';
+        else if (w.state === 'chase_hedgehog') tint = 'rgba(220, 120, 40, 0.32)';
+        else if (w.state === 'retreat' || w.state === 'circle' || w.state === 'approach') tint = 'rgba(200, 180, 60, 0.25)';
+        else tint = 'rgba(200, 30, 30, 0.28)';
+        ctx.beginPath(); ctx.arc(w.x, w.y, 26, 0, Math.PI * 2); ctx.fillStyle = tint; ctx.fill();
+        drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
+    }
+    if (w.state === 'search') {
+        ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('?', w.x, w.y - 34);
+    } else if (w.state === 'flee' && !w.postBite) {
+        ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('»', w.x, w.y - 34);
+    } else if (w.state === 'strike' || w.state === 'commit') {
+        ctx.fillStyle = '#ff4444'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('!', w.x, w.y - 34);
+    }
+}
+
+function drawHunter() {
     drawShadow(hunter.x, hunter.y + 12, 22);
     drawRotatedSprite('hunter', hunter.x, hunter.y, hunter.angle + ROT_OFFSET_HUNTER, SPRITES.hunter.size);
     ctx.save();
@@ -1230,7 +1399,6 @@ function draw() {
     ctx.fillStyle = '#3a3a3a'; ctx.fillRect(16, -3, 28, 6);
     ctx.fillStyle = '#5a5a5a'; ctx.fillRect(40, -4, 8, 8);
     ctx.restore();
-
     if (hunter.target && !hunter.target.dead && hunter.target.state !== 'dying') {
         const canFire = ammo > 0;
         const block = getLOSBlock(hunter, hunter.target);
@@ -1270,65 +1438,6 @@ function draw() {
         ctx.fillStyle = '#ff6666'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
         ctx.fillText('⏳ ' + reloadTimer.toFixed(1), hunter.x, hunter.y - 46);
     }
-    bullets.forEach(b => {
-        if (b.trail.length > 1) {
-            for (let i = 0; i < b.trail.length - 1; i++) {
-                const t = b.trail[i], t2 = b.trail[i + 1];
-                const a = (i / b.trail.length) * 0.7;
-                ctx.strokeStyle = `rgba(255, 230, 120, ${a})`;
-                ctx.lineWidth = 1 + (i / b.trail.length) * 2;
-                ctx.beginPath(); ctx.moveTo(t.x, t.y); ctx.lineTo(t2.x, t2.y); ctx.stroke();
-            }
-        }
-        ctx.fillStyle = 'rgba(255, 250, 180, 0.95)';
-        ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = 'rgba(255, 180, 60, 0.5)';
-        ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
-    });
-    drawShadow(hedgehog.x, hedgehog.y + 8, 16);
-    ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
-    drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
-    ctx.globalAlpha = 1;
-    sparks.forEach(s => {
-        const a = s.ttl / s.maxTtl;
-        ctx.fillStyle = 'rgba(255, 220, 100, ' + a + ')';
-        ctx.beginPath(); ctx.arc(s.x, s.y, 4 + (1 - a) * 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = 'rgba(255, 120, 40, ' + (a * 0.7) + ')';
-        ctx.beginPath(); ctx.arc(s.x, s.y, 2 + (1 - a) * 4, 0, Math.PI * 2); ctx.fill();
-    });
-    if (mouseScreen && gameState === 'playing') {
-        const ttx = mouseScreen.x / ZOOM + cam.x, tty = mouseScreen.y / ZOOM + cam.y;
-        if (Math.hypot(ttx - hedgehog.x, tty - hedgehog.y) > 8) {
-            ctx.beginPath(); ctx.arc(ttx, tty, 4, 0, Math.PI * 2);
-            ctx.strokeStyle = 'rgba(255, 200, 100, 0.7)'; ctx.lineWidth = 1.5; ctx.stroke();
-        }
-    }
-    const time = performance.now() / 1000;
-    fireflies.forEach(f => {
-        const fx = f.x + Math.sin(time * f.speed + f.phase) * 25;
-        const fy = f.y + Math.cos(time * f.speed * 0.7 + f.phase) * 18;
-        const alpha = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(time * 2.5 + f.phase));
-        ctx.fillStyle = `rgba(255, 200, 60, ${alpha * 0.25})`;
-        ctx.beginPath(); ctx.arc(fx, fy, f.radius * 4, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = `rgba(255, 240, 150, ${alpha})`;
-        ctx.beginPath(); ctx.arc(fx, fy, f.radius, 0, Math.PI * 2); ctx.fill();
-    });
-    ctx.restore();
-
-    if (damageFlash > 0) {
-        ctx.fillStyle = `rgba(180, 20, 20, ${damageFlash * 0.5})`;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-
-    document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
-    document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
-    document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
-    document.getElementById('kills').textContent      = kills;
-    difficultyEl.textContent = breakCount + ' (волков: ' + getWolvesPerWave() + ')';
-    if (breakTimer > 0 && gameState === 'playing') {
-        breakStatus.style.display = 'block';
-        breakTimeEl.textContent = breakTimer.toFixed(1);
-    } else breakStatus.style.display = 'none';
 }
 
 function gameLoop(t) {
