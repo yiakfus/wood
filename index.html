@@ -28,15 +28,14 @@ canvas { display: block; background: #050a07; touch-action: none; }
 #break-status { display: none; color: #ffcc66; font-weight: bold; }
 #difficulty { color: #ff9966; }
 #buttons { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
-#reload-traps, #pause-btn {
+#pause-btn {
     display: block; min-height: 44px; padding: 10px 18px;
     background: #3a5a40; color: #fff; border: 2px solid #8b5a2b;
     font-family: monospace; font-size: clamp(12px, 2.8vw, 14px);
     font-weight: bold; cursor: pointer; border-radius: 4px;
     letter-spacing: 1px; touch-action: manipulation;
 }
-#reload-traps { display: none; }
-#reload-traps:active, #pause-btn:active { background: #4a6a50; }
+#pause-btn:active { background: #4a6a50; }
 #overlay {
     position: fixed; inset: 0; display: flex; flex-direction: column;
     justify-content: center; align-items: center;
@@ -63,13 +62,12 @@ canvas { display: block; background: #050a07; touch-action: none; }
     <div>🔥 <b id="difficulty">0</b> · 🌊 <b id="waveNum">0</b> · 💀 <b id="kills">0</b></div>
     <div id="break-status">⏸ Передышка <b id="breakTime">10.0</b>с</div>
     <div id="buttons">
-        <button id="reload-traps">Обновить ловушки</button>
         <button id="pause-btn">⏸ Пауза</button>
     </div>
 </div>
 <div id="overlay">
     <h1 id="ov-title">Ночная тайга</h1>
-    <p id="ov-text">Ёж бежит за пальцем или курсором. Заманивай волков в ямы: каждая убивает одного. Убей 5 — появится кнопка обновления. Каждые 5 убийств — передышка. После каждой передышки сложность растёт. В кустах можно спрятаться. Деревья, камни и костёр блокируют выстрелы охотника.</p>
+    <p id="ov-text">Ёж бежит за пальцем или курсором. Заманивай волков в ямы: каждая убивает одного и автоматически восстанавливается после 5 убийств. Каждые 5 убийств — передышка. После каждой передышки сложность растёт. В кустах можно спрятаться. Деревья, камни и костёр блокируют выстрелы охотника.</p>
     <button id="ov-btn">СТАРТ</button>
 </div>
 
@@ -80,7 +78,6 @@ const overlay = document.getElementById('overlay');
 const ovTitle = document.getElementById('ov-title');
 const ovText  = document.getElementById('ov-text');
 const ovBtn   = document.getElementById('ov-btn');
-const reloadTrapsBtn = document.getElementById('reload-traps');
 const pauseBtn = document.getElementById('pause-btn');
 const breakStatus = document.getElementById('break-status');
 const breakTimeEl = document.getElementById('breakTime');
@@ -111,17 +108,12 @@ const DIFFICULTY_SPAWN_STEP  = 0.5;
 const DIFFICULTY_SPEED_STEP  = 5;
 
 // ===== ПОВОРОТЫ СПРАЙТОВ =====
-// Если персонаж смотрит не туда — подкрутите одну из этих констант:
-//   -π/2 = спрайт нарисован «смотрящим вниз» (стандарт top-down)
-//    0    = спрайт нарисован «смотрящим вправо»
-//   +π/2  = спрайт нарисован «смотрящим вверх»
+// Если персонаж смотрит не туда: -π/2 (вниз), 0 (вправо), +π/2 (вверх), π (влево)
 const ROT_OFFSET_HEDGEHOG = -Math.PI / 2;
 const ROT_OFFSET_WOLF     = -Math.PI / 2;
 const ROT_OFFSET_HUNTER   = -Math.PI / 2;
 
 // ===== СПРАЙТЫ =====
-// Все PNG 128×128 — размеры подобраны, чтобы персонажи читались, а лес был плотным.
-// ВАЖНО: grass.path — замените на ваш рабочий путь!
 const SPRITES = {
     hedgehog: { path: 'https://yiakfus.github.io/wood/asset/sprites/hedgehog.png', size: 46,  loaded: false },
     wolf:     { path: 'https://yiakfus.github.io/wood/asset/sprites/wolf.png',     size: 90,  loaded: false },
@@ -131,7 +123,7 @@ const SPRITES = {
     rock:     { path: 'https://yiakfus.github.io/wood/asset/sprites/rock.png',     size: 56,  loaded: false },
     bush:     { path: 'https://yiakfus.github.io/wood/asset/sprites/bush.png',     size: 140, loaded: false },
     trap:     { path: 'https://yiakfus.github.io/wood/asset/sprites/trap.png',     size: 96,  loaded: false },
-    grass:    { path: 'https://yiakfus.github.io/wood/asset/sprites/grass.png',      size: 96,  loaded: false },
+    grass:    { path: 'https://yiakfus.github.io/wood/asset/sprites/grass.png',    size: 96,  loaded: false },
 };
 for (const key in SPRITES) {
     const s = SPRITES[key];
@@ -264,7 +256,6 @@ function generateWorld() {
     obstacles = [];
     bushes = [];
 
-    // Деревья (радиус коллизии 28–38 — честнее к визуалу)
     for (let i = 0; i < 100; i++) {
         for (let tries = 0; tries < 40; tries++) {
             const x = randRange(60, WORLD_W - 60);
@@ -277,7 +268,6 @@ function generateWorld() {
             break;
         }
     }
-    // Камни
     for (let i = 0; i < 30; i++) {
         for (let tries = 0; tries < 40; tries++) {
             const x = randRange(60, WORLD_W - 60);
@@ -291,7 +281,7 @@ function generateWorld() {
         }
     }
 
-    // ==== КУСТЫ: сначала 6 ближних (220–380 от костра) — ёж успевает ====
+    // 6 ближних кустов (220–380 от костра)
     for (let i = 0; i < 6; i++) {
         for (let tries = 0; tries < 100; tries++) {
             const angle = Math.random() * Math.PI * 2;
@@ -307,7 +297,7 @@ function generateWorld() {
             break;
         }
     }
-    // Остальные 8 кустов — где угодно
+    // 8 кустов в остальном мире
     for (let i = 0; i < 8; i++) {
         for (let tries = 0; tries < 40; tries++) {
             const x = randRange(80, WORLD_W - 80);
@@ -324,25 +314,25 @@ function generateWorld() {
     generateTraps();
 }
 function generateTraps() {
-    for (let tries = 0; tries < 400; tries++) {
+    for (let tries = 0; tries < 500; tries++) {
         const a1 = Math.random() * Math.PI * 2;
         const a2 = a1 + Math.PI + (Math.random() - 0.5) * (Math.PI / 3);
-        const d1 = randRange(300, 450), d2 = randRange(300, 450);
+        const d1 = randRange(200, 340), d2 = randRange(200, 340);
         const x1 = 1200 + Math.cos(a1) * d1, y1 = 800 + Math.sin(a1) * d1;
         const x2 = 1200 + Math.cos(a2) * d2, y2 = 800 + Math.sin(a2) * d2;
         if (x1 < 80 || x1 > WORLD_W - 80 || y1 < 80 || y1 > WORLD_H - 80) continue;
         if (x2 < 80 || x2 > WORLD_W - 80 || y2 < 80 || y2 > WORLD_H - 80) continue;
-        if (Math.hypot(x1 - x2, y1 - y2) < 500) continue;
+        if (Math.hypot(x1 - x2, y1 - y2) < 350) continue;
         if (Math.hypot(x1 - campfire.x, y1 - campfire.y) < campfire.radius + 50) continue;
         if (Math.hypot(x2 - campfire.x, y2 - campfire.y) < campfire.radius + 50) continue;
         if (obstacles.some(o => Math.hypot(o.x - x1, o.y - y1) < o.r + 50)) continue;
         if (obstacles.some(o => Math.hypot(o.x - x2, o.y - y2) < o.r + 50)) continue;
-        if (bushes.some(b => Math.hypot(b.x - x1, b.y - y1) < b.r + 40)) continue;
-        if (bushes.some(b => Math.hypot(b.x - x2, b.y - y2) < b.r + 40)) continue;
+        if (bushes.some(b => Math.hypot(b.x - x1, b.y - y1) < b.r + 50)) continue;
+        if (bushes.some(b => Math.hypot(b.x - x2, b.y - y2) < b.r + 50)) continue;
         traps[0].x = x1; traps[0].y = y1; traps[1].x = x2; traps[1].y = y2;
         return;
     }
-    traps[0].x = 800; traps[0].y = 500; traps[1].x = 1600; traps[1].y = 1100;
+    traps[0].x = 900; traps[0].y = 600; traps[1].x = 1500; traps[1].y = 1000;
 }
 
 // ===== УПРАВЛЕНИЕ =====
@@ -466,9 +456,19 @@ function getLOSBlock(from, to) {
     }
     return best;
 }
+
+// ===== УБИЙСТВО + АВТО-ПЕРЕЗАРЯДКА ЛОВУШЕК + ПЕРЕДЫШКА =====
 function registerKill() {
     kills++;
-    if (traps.some(t => !t.active)) killsSinceReload++;
+
+    if (traps.some(t => !t.active)) {
+        killsSinceReload++;
+        if (killsSinceReload >= TRAP_RELOAD_KILLS) {
+            traps.forEach(t => { if (!t.active) t.active = true; });
+            killsSinceReload = 0;
+        }
+    }
+
     if (breakTimer <= 0) {
         killsSinceBreak++;
         if (killsSinceBreak >= BREAK_KILLS) {
@@ -493,7 +493,7 @@ function updateHedgehog(dt) {
     if (len > 0) {
         hedgehog.x += (vx / len) * HEDGEHOG_SPEED * dt;
         hedgehog.y += (vy / len) * HEDGEHOG_SPEED * dt;
-        hedgehog.angle = Math.atan2(vy, vx);   // поворот по направлению движения
+        hedgehog.angle = Math.atan2(vy, vx);
     }
     resolveObstacles(hedgehog);
 }
@@ -542,7 +542,7 @@ function updateWolves(dt) {
         if (dd > 0) {
             wolf.x += (dx / dd) * speed * dt;
             wolf.y += (dy / dd) * speed * dt;
-            wolf.angle = Math.atan2(dy, dx);   // поворот волка по движению
+            wolf.angle = Math.atan2(dy, dx);
         }
         resolveObstacles(wolf);
         traps.forEach(trap => {
@@ -570,7 +570,6 @@ function updateHunter(dt) {
             if (score < bestScore) { bestScore = score; best = w; }
         });
         hunter.target = best;
-        // Поворот охотника: к цели, иначе — к ежу
         const aim = (best && !best.dead) ? best : hedgehog;
         hunter.angle = Math.atan2(aim.y - hunter.y, aim.x - hunter.x);
         if (best && ammo > 0) {
@@ -580,7 +579,6 @@ function updateHunter(dt) {
             ammo = 0; reloadTimer = RELOAD_TIME;
         }
     } else {
-        // Нет волков — охотник смотрит на ежа
         hunter.angle = Math.atan2(hedgehog.y - hunter.y, hedgehog.x - hunter.x);
     }
 }
@@ -594,30 +592,16 @@ function updateCamera(dt) {
     cam.x += (tx - cam.x) * lerp;
     cam.y += (ty - cam.y) * lerp;
 }
-reloadTrapsBtn.addEventListener('click', () => {
-    let any = false;
-    traps.forEach(t => { if (!t.active) { t.active = true; any = true; } });
-    if (any) killsSinceReload = 0;
-});
-function updateTrapsButton() {
-    const disarmed = traps.some(t => !t.active);
-    if (disarmed && killsSinceReload >= TRAP_RELOAD_KILLS && gameState === 'playing') {
-        reloadTrapsBtn.style.display = 'block';
-        reloadTrapsBtn.textContent = 'Обновить ловушки';
-    } else reloadTrapsBtn.style.display = 'none';
-}
 
 // ===== ОТРИСОВКА =====
 function draw() {
     ctx.fillStyle = '#050a07';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ============ МИР (мировые координаты) ============
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
 
-    // 1) ТРАВА
     const ts = SPRITES.grass.size;
     for (let x = 0; x < WORLD_W; x += ts) {
         for (let y = 0; y < WORLD_H; y += ts) {
@@ -625,10 +609,8 @@ function draw() {
         }
     }
 
-    // 2) КУСТЫ
     bushes.forEach(b => drawSprite('bush', b.x, b.y, b.r * 2.3));
 
-    // 3) ЛОВУШКИ
     traps.forEach(trap => {
         drawSprite('trap', trap.x, trap.y, trap.r * 2.1);
         if (!trap.active) {
@@ -643,17 +625,14 @@ function draw() {
         ctx.fillText(trap.active ? 'готово' : (Math.min(TRAP_RELOAD_KILLS, killsSinceReload) + '/' + TRAP_RELOAD_KILLS), trap.x, trap.y + 5);
     });
 
-    // 4) ДЕРЕВЬЯ И КАМНИ (с тенями)
     obstacles.forEach(o => {
         drawShadow(o.x, o.y + o.r * 0.4, o.r * 1.1);
         if (o.type === 'tree') drawSprite('tree', o.x, o.y, o.r * 2.9);
         else drawSprite('rock', o.x, o.y, o.r * 2.1);
     });
 
-    // 5) КОСТЁР-СПРАЙТ (glow будет нарисован отдельно поверх тьмы)
     drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
 
-    // 6) РАДИУС ПРИМАНИВАНИЯ
     ctx.beginPath();
     ctx.arc(hedgehog.x, hedgehog.y, ATTRACT_RADIUS, 0, Math.PI * 2);
     ctx.setLineDash([6, 8]);
@@ -664,35 +643,35 @@ function draw() {
 
     ctx.restore();
 
-    // ============ СЛОЙ ТЬМЫ (экранные координаты) ============
+    // ===== СЛОЙ ТЬМЫ =====
     const cx = (campfire.x - cam.x) * ZOOM;
     const cy = (campfire.y - cam.y) * ZOOM;
-    const litR = 350 * ZOOM;
-    const darkR = Math.max(canvas.width, canvas.height) * 0.9;
+    const litR = 200 * ZOOM;
+    const darkR = 400 * ZOOM;
 
     const darkGrad = ctx.createRadialGradient(cx, cy, litR, cx, cy, darkR);
     darkGrad.addColorStop(0, 'rgba(5, 10, 25, 0)');
-    darkGrad.addColorStop(0.45, 'rgba(5, 10, 25, 0.45)');
-    darkGrad.addColorStop(0.8, 'rgba(3, 6, 18, 0.85)');
-    darkGrad.addColorStop(1, 'rgba(2, 4, 12, 0.97)');
+    darkGrad.addColorStop(0.4, 'rgba(4, 8, 20, 0.55)');
+    darkGrad.addColorStop(0.75, 'rgba(2, 4, 12, 0.9)');
+    darkGrad.addColorStop(1, 'rgba(0, 0, 0, 1)');
     ctx.fillStyle = darkGrad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ============ ФОНАРИК ЕЖА (поверх тьмы, мягкий ореол) ============
+    // ===== ФОНАРИК ЕЖА =====
     const hx = (hedgehog.x - cam.x) * ZOOM;
     const hy = (hedgehog.y - cam.y) * ZOOM;
-    const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 180);
-    hGrad.addColorStop(0, 'rgba(255, 220, 150, 0.18)');
+    const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300);
+    hGrad.addColorStop(0, 'rgba(255, 220, 150, 0.32)');
+    hGrad.addColorStop(0.5, 'rgba(255, 220, 150, 0.12)');
     hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
     ctx.fillStyle = hGrad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ============ ПЕРСОНАЖИ (поверх тьмы, чтобы были видны всегда) ============
+    // ===== ПЕРСОНАЖИ (поверх тьмы) =====
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
 
-    // Glow костра поверх тьмы — создаёт «дырку» в темноте
     const pulse = 1 + Math.sin(performance.now() * 0.008) * 0.15;
     const fg = ctx.createRadialGradient(campfire.x, campfire.y, 0, campfire.x, campfire.y, campfire.radius * 4.5 * pulse);
     fg.addColorStop(0, 'rgba(255, 200, 50, 0.55)');
@@ -703,10 +682,8 @@ function draw() {
     ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2);
     ctx.fill();
 
-    // Охотник
     drawShadow(hunter.x, hunter.y + 12, 22);
     drawRotatedSprite('hunter', hunter.x, hunter.y, hunter.angle + ROT_OFFSET_HUNTER, SPRITES.hunter.size);
-    // Ствол охотника — совпадает с направлением тела
     ctx.save();
     ctx.translate(hunter.x, hunter.y);
     ctx.rotate(hunter.angle);
@@ -716,7 +693,6 @@ function draw() {
     ctx.fillRect(40, -4, 8, 8);
     ctx.restore();
 
-    // Прицел
     if (hunter.target && !hunter.target.dead) {
         const canFire = ammo > 0;
         const block = getLOSBlock(hunter, hunter.target);
@@ -761,10 +737,8 @@ function draw() {
         ctx.fillText('⏳ ' + reloadTimer.toFixed(1), hunter.x, hunter.y - 46);
     }
 
-    // Волки
     wolves.forEach(w => {
         drawShadow(w.x, w.y + 8, 18);
-        // Цветовой ореол статуса (под спрайтом)
         let tint = null;
         if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
         else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
@@ -786,13 +760,11 @@ function draw() {
         }
     });
 
-    // Ёж
     drawShadow(hedgehog.x, hedgehog.y + 8, 16);
     ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
     drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
     ctx.globalAlpha = 1;
 
-    // Искры
     sparks.forEach(s => {
         const a = s.ttl / s.maxTtl;
         ctx.fillStyle = 'rgba(255, 220, 100, ' + a + ')';
@@ -801,7 +773,6 @@ function draw() {
         ctx.beginPath(); ctx.arc(s.x, s.y, 2 + (1 - a) * 4, 0, Math.PI * 2); ctx.fill();
     });
 
-    // Маркер цели (куда идёт ёж)
     if (mouseScreen && gameState === 'playing') {
         const ttx = mouseScreen.x / ZOOM + cam.x;
         const tty = mouseScreen.y / ZOOM + cam.y;
@@ -813,7 +784,6 @@ function draw() {
         }
     }
 
-    // Светлячки (поверх тьмы — их всегда видно)
     const time = performance.now() / 1000;
     fireflies.forEach(f => {
         const fx = f.x + Math.sin(time * f.speed + f.phase) * 25;
@@ -827,13 +797,11 @@ function draw() {
 
     ctx.restore();
 
-    // ============ ВСПЫШКА УРОНА ============
     if (damageFlash > 0) {
         ctx.fillStyle = `rgba(180, 20, 20, ${damageFlash * 0.5})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
-    // ============ HUD ============
     document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
     document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
     document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
@@ -844,7 +812,6 @@ function draw() {
         breakStatus.style.display = 'block';
         breakTimeEl.textContent = breakTimer.toFixed(1);
     } else breakStatus.style.display = 'none';
-    updateTrapsButton();
 }
 
 function gameLoop(t) {
