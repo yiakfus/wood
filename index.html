@@ -129,7 +129,7 @@ const WOLF_CIRCLE_SPEED = 1.0;
 const WOLF_COMMIT_SPEED = 1.15;
 const WOLF_RETREAT_MIN  = 150;
 const HUNTER_TARGET_CONE = 70 * Math.PI / 180;
-const WOLF_POST_BITE_WAIT = 5; // сек ожидания после укуса (тяжёлый)
+const WOLF_POST_BITE_WAIT = 5;
 
 const BULLET_SPEED = 900;
 const BULLET_LIFE  = 1.2;
@@ -144,7 +144,6 @@ const ROT_OFFSET_WOLF     = -Math.PI / 2;
 const ROT_OFFSET_HUNTER   = -Math.PI / 2;
 const WIN_KILLS = 25;
 
-// ===== СЛОЖНОСТИ =====
 const DIFFICULTIES = {
     easy: {
         label: 'Лёгкий',
@@ -153,7 +152,7 @@ const DIFFICULTIES = {
         spawnInterval: 10, wolvesPerWave: 1, maxWolvesPerWave: 5,
         hunterRange: 300, hunterTurnSpeed: Math.PI * 3, hunterTurnDelay: 0.2,
         heartDropChance: 0.30,
-        postBiteBehavior: 'despawn', // убегает и исчезает
+        postBiteBehavior: 'despawn',
         recordKey: 'nightTaigaRecord_easy'
     },
     normal: {
@@ -163,7 +162,7 @@ const DIFFICULTIES = {
         spawnInterval: 8, wolvesPerWave: 2, maxWolvesPerWave: 6,
         hunterRange: 280, hunterTurnSpeed: Math.PI * 2, hunterTurnDelay: 0.4,
         heartDropChance: 0.20,
-        postBiteBehavior: 'despawn', // убегает и исчезает
+        postBiteBehavior: 'despawn',
         recordKey: 'nightTaigaRecord_normal'
     },
     hard: {
@@ -173,7 +172,7 @@ const DIFFICULTIES = {
         spawnInterval: 7, wolvesPerWave: 2, maxWolvesPerWave: 7,
         hunterRange: 260, hunterTurnSpeed: Math.PI * 1.5, hunterTurnDelay: 0.6,
         heartDropChance: 0.15,
-        postBiteBehavior: 'wait', // убегает, ждёт 5 сек, возвращается
+        postBiteBehavior: 'wait',
         recordKey: 'nightTaigaRecord_hard'
     }
 };
@@ -181,7 +180,6 @@ const DIFFICULTIES = {
 let currentDiffKey = 'normal';
 let D = DIFFICULTIES[currentDiffKey];
 
-// ===== СПРАЙТЫ =====
 const SPRITES = {
     hedgehog: { path: 'https://yiakfus.github.io/wood/asset/sprites/hedgehog.png', size: 46,  loaded: false },
     wolf:     { path: 'https://yiakfus.github.io/wood/asset/sprites/wolf.png',     size: 90,  loaded: false },
@@ -295,7 +293,6 @@ function setRecord(v) {
     if (v > prev) localStorage.setItem(D.recordKey, v);
 }
 
-// ===== ХЕЛПЕРЫ РИСОВАНИЯ =====
 function drawSprite(key, x, y, sizeOverride) {
     const s = SPRITES[key];
     const size = sizeOverride || s.size;
@@ -340,7 +337,6 @@ function drawHeart(cx, cy, size, fill, outline, alpha = 1) {
     ctx.restore();
 }
 
-// ===== CANVAS =====
 function computeBaseZoom() {
     const raw = canvas.width / 800;
     return Math.min(2.7, Math.max(2.2, raw * 1.6));
@@ -376,7 +372,6 @@ function updateZoom(dt) {
     ZOOM += (ZOOM_TARGET - ZOOM) * Math.min(1, dt * ZOOM_LERP_SPEED);
 }
 
-// ===== ГЕНЕРАЦИЯ МИРА =====
 function generateWorld() {
     obstacles = []; bushes = [];
     for (let i = 0; i < 100; i++) {
@@ -444,7 +439,6 @@ function generateTraps() {
     traps[0].x = 900; traps[0].y = 600; traps[1].x = 1500; traps[1].y = 1000;
 }
 
-// ===== УПРАВЛЕНИЕ =====
 function setPointer(e) {
     const rect = canvas.getBoundingClientRect();
     const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
@@ -456,7 +450,6 @@ canvas.addEventListener('pointermove', setPointer);
 canvas.addEventListener('pointerdown', setPointer);
 canvas.addEventListener('pointercancel', () => { mouseScreen = null; });
 
-// ===== ОВЕРЛЕЙ =====
 function clearDynamicButtons() {
     ['win-continue', 'restart-btn', 'change-btn', 'resume-btn'].forEach(id => {
         const el = document.getElementById(id);
@@ -580,7 +573,6 @@ function startGame(diffKey) {
     if (vh >= WORLD_H) cam.y = (WORLD_H - vh) / 2; else cam.y = clamp(hedgehog.y - vh / 2, 0, WORLD_H - vh);
 }
 
-// ===== ФИЗИКА =====
 function resolveObstacles(entity) {
     obstacles.forEach(o => {
         const dx = entity.x - o.x, dy = entity.y - o.y;
@@ -600,7 +592,7 @@ function separateWolves() {
         for (let j = i + 1; j < wolves.length; j++) {
             const a = wolves[i], b = wolves[j];
             if (a.state === 'dying' || b.state === 'dying') continue;
-            if (a.state === 'flee' && b.state === 'flee') continue; // убегающие не мешают друг другу
+            if (a.state === 'flee' && b.state === 'flee') continue;
             const dx = b.x - a.x, dy = b.y - a.y;
             const d = Math.hypot(dx, dy);
             const minD = a.radius + b.radius + WOLF_SEPARATION;
@@ -688,7 +680,6 @@ function killWolf(wolf, byTrap = false) {
     registerKill();
 }
 
-// ★ Волк укусил и убегает — без смерти
 function wolfBiteAndFlee(wolf) {
     wolf.state = 'flee';
     wolf.targetingHedgehog = false;
@@ -753,7 +744,6 @@ function checkBushEntry() {
     hedgehogWasHidden = hidden;
 }
 
-// ===== УМНЫЕ ВОЛКИ =====
 function updateWolves(dt) {
     const hidden = isHedgehogHidden();
     const baseSpeed = getWolfSpeed();
@@ -768,16 +758,12 @@ function updateWolves(dt) {
 
         const dH = dist(wolf, hedgehog), dHunt = dist(wolf, hunter);
 
-        // ★ Если волк убегает (передышка ИЛИ после укуса)
         if (breakTimer > 0 || wolf.state === 'flee') {
             const wasPostBite = wolf.postBite;
-
             if (!wolf.state || wolf.state !== 'flee') {
                 wolf.state = 'flee';
                 wolf.targetingHedgehog = false;
             }
-
-            // Движение от охотника (или в сторону от центра, если охотник близко)
             const dxF = wolf.x - hunter.x, dyF = wolf.y - hunter.y;
             const dF = Math.hypot(dxF, dyF);
             if (dF > 0) {
@@ -786,22 +772,13 @@ function updateWolves(dt) {
                 wolf.angle = Math.atan2(dyF, dxF);
             }
             resolveObstacles(wolf);
-
-            // ★ Укусивший волк НЕ попадает в ловушки
-            if (!wasPostBite) {
-                // (проверка ловушек для убегающих из-за передышки — по желанию)
-            }
-
-            // ★ Поведение после укуса зависит от сложности
             if (wasPostBite) {
                 if (D.postBiteBehavior === 'despawn') {
                     if (dF > FLEE_DESPAWN_DIST) wolf.dead = true;
                 } else if (D.postBiteBehavior === 'wait') {
-                    // отбежал достаточно далеко — начинаем отсчёт
                     if (dF > FLEE_DESPAWN_DIST) {
                         wolf.postBiteT += dt;
                         if (wolf.postBiteT >= WOLF_POST_BITE_WAIT) {
-                            // возвращается
                             wolf.state = 'hunt';
                             wolf.postBite = false;
                             wolf.postBiteT = 0;
@@ -810,13 +787,11 @@ function updateWolves(dt) {
                     }
                 }
             } else {
-                // обычная передышка — деспавн
                 if (dF > FLEE_DESPAWN_DIST) wolf.dead = true;
             }
             return;
         }
 
-        // Контактные атаки — теперь БЕЗ смерти волка
         if (dH < wolf.radius + hedgehog.radius && !hidden) {
             hedgehog.hp -= 1; damageFlash = 0.4;
             wolfBiteAndFlee(wolf);
@@ -973,7 +948,6 @@ function updateDeathFx(dt) {
     deathFx = deathFx.filter(fx => fx.ttl > 0);
 }
 
-// ===== ПУЛИ =====
 function fireBullet(target) {
     const dx = target.x - hunter.x, dy = target.y - hunter.y;
     const d = Math.hypot(dx, dy) || 1;
@@ -1032,7 +1006,6 @@ function updateFireParticles(dt) {
     fireParticles = fireParticles.filter(p => p.life > 0);
 }
 
-// ===== ОХОТНИК =====
 function updateHunter(dt) {
     if (reloadTimer > 0) { reloadTimer -= dt; if (reloadTimer <= 0) { ammo = 1; reloadTimer = 0; } }
     const prevTarget = hunter.target;
@@ -1041,7 +1014,6 @@ function updateHunter(dt) {
         let best = null, bestScore = Infinity;
         wolves.forEach(w => {
             if (w.state === 'dying') return;
-            // ★ Охотник НЕ стреляет в укусившего волка (postBite && flee)
             if (w.state === 'flee' && w.postBite) return;
             const d = dist(w, hunter);
             if (d > D.hunterRange) return;
@@ -1158,20 +1130,64 @@ function draw() {
         }
         const visible = isWolfVisible(w);
         if (visible) {
-            drawShadow(w.x, w.y + 8, 18);
-            let tint;
-            if (w.state === 'flee' && w.postBite) tint = 'rgba(255, 255, 100, 0.35)'; // жёлтый — укусил
-            else if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
-            else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
-            else if (w.state === 'strike' || w.state === 'commit') tint = 'rgba(255, 40, 40, 0.45)';
-            else if (w.state === 'chase_hedgehog') tint = 'rgba(220, 120, 40, 0.32)';
-            else if (w.state === 'retreat' || w.state === 'circle' || w.state === 'approach') tint = 'rgba(200, 180, 60, 0.25)';
-            else tint = 'rgba(200, 30, 30, 0.28)';
-            ctx.beginPath(); ctx.arc(w.x, w.y, 26, 0, Math.PI * 2); ctx.fillStyle = tint; ctx.fill();
-            drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
-            if (w.state === 'search') { ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center'; ctx.fillText('?', w.x, w.y - 34); }
-            else if (w.state === 'flee') { ctx.fillStyle = w.postBite ? '#ffff66' : '#cccccc'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.fillText(w.postBite ? '✓' : '»', w.x, w.y - 34); }
-            else if (w.state === 'strike' || w.state === 'commit') { ctx.fillStyle = '#ff4444'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.fillText('!', w.x, w.y - 34); }
+            const isPostBite = (w.state === 'flee' && w.postBite);
+            if (isPostBite) {
+                // ★ Красно-пульсирующая аура
+                const puls = 0.5 + 0.5 * Math.sin(performance.now() * 0.02);
+                const auraR = 26 + puls * 8;
+                // заливка
+                ctx.beginPath();
+                ctx.arc(w.x, w.y, auraR, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 40, 40, ${0.20 + puls * 0.30})`;
+                ctx.fill();
+                // кольцо
+                ctx.beginPath();
+                ctx.arc(w.x, w.y, auraR + 4, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(255, 80, 80, ${0.35 + puls * 0.45})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                // тёмная тень под волком
+                drawShadow(w.x, w.y + 8, 18, 0.5);
+                // спрайт — через filter (тёмный), с fallback
+                ctx.save();
+                try {
+                    ctx.filter = 'brightness(0.25) saturate(0.4)';
+                } catch (e) {}
+                drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
+                ctx.restore();
+                // на всякий случай — полупрозрачный тёмный круг в центре
+                // (если filter не сработал, это даст хоть какой-то эффект)
+                ctx.save();
+                ctx.globalAlpha = 0.45;
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.beginPath();
+                ctx.arc(w.x, w.y, 18, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            } else {
+                // обычная аура
+                drawShadow(w.x, w.y + 8, 18);
+                let tint;
+                if (w.state === 'flee') tint = 'rgba(180, 180, 180, 0.3)';
+                else if (w.state === 'search') tint = 'rgba(140, 140, 140, 0.3)';
+                else if (w.state === 'strike' || w.state === 'commit') tint = 'rgba(255, 40, 40, 0.45)';
+                else if (w.state === 'chase_hedgehog') tint = 'rgba(220, 120, 40, 0.32)';
+                else if (w.state === 'retreat' || w.state === 'circle' || w.state === 'approach') tint = 'rgba(200, 180, 60, 0.25)';
+                else tint = 'rgba(200, 30, 30, 0.28)';
+                ctx.beginPath(); ctx.arc(w.x, w.y, 26, 0, Math.PI * 2); ctx.fillStyle = tint; ctx.fill();
+                drawRotatedSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
+            }
+            // маркеры состояний (у postBite — ничего)
+            if (w.state === 'search') {
+                ctx.fillStyle = '#ffff66'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
+                ctx.fillText('?', w.x, w.y - 34);
+            } else if (w.state === 'flee' && !w.postBite) {
+                ctx.fillStyle = '#cccccc'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
+                ctx.fillText('»', w.x, w.y - 34);
+            } else if (w.state === 'strike' || w.state === 'commit') {
+                ctx.fillStyle = '#ff4444'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
+                ctx.fillText('!', w.x, w.y - 34);
+            }
         } else {
             if (w.state !== 'flee') drawWolfEyes(w);
         }
