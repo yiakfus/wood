@@ -282,7 +282,7 @@ function generateWorld() {
     }
 
     // 6 ближних кустов (220–380 от костра)
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 3; i++) {
         for (let tries = 0; tries < 100; tries++) {
             const angle = Math.random() * Math.PI * 2;
             const dR = randRange(220, 380);
@@ -647,7 +647,7 @@ function draw() {
     const cx = (campfire.x - cam.x) * ZOOM;
     const cy = (campfire.y - cam.y) * ZOOM;
     const litR = 200 * ZOOM;
-    const darkR = 400 * ZOOM;
+    const darkR = 600 * ZOOM;
 
     const darkGrad = ctx.createRadialGradient(cx, cy, litR, cx, cy, darkR);
     darkGrad.addColorStop(0, 'rgba(5, 10, 25, 0)');
