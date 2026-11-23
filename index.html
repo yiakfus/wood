@@ -196,7 +196,7 @@ const SPRITES = {
     grass:    { path: 'https://yiakfus.github.io/wood/asset/sprites/grass.png',    size: 96,  loaded: false },
 };
 
-// ★ Предварительно затемнённые версии спрайтов (для силуэтов и укусившего волка)
+// ★ Затемнённая версия только для волка
 function makeDarkVersion(key) {
     const s = SPRITES[key];
     if (!s.loaded) return;
@@ -217,7 +217,7 @@ for (const key in SPRITES) {
     s.img.onload  = () => {
         s.loaded = true;
         console.log('✓', key);
-        if (key === 'tree_crown_1' || key === 'wolf') makeDarkVersion(key);
+        if (key === 'wolf') makeDarkVersion(key);
     };
     s.img.onerror = () => { console.error('✗ не загрузился:', s.path); };
     s.img.src = s.path;
@@ -258,7 +258,6 @@ let lastTime = performance.now();
 let damageFlash = 0;
 let winShown = false;
 
-// ★ Offscreen canvas для травы
 let grassCanvas = null;
 
 function buildGrassCanvas() {
@@ -347,14 +346,13 @@ function depthOffsetY(y) {
     return (k - 0.5) * DEPTH_OFFSET_MAX * 2;
 }
 
-// ===== ХЕЛПЕРЫ РИСОВАНИЯ (оптимизированные) =====
+// ===== ХЕЛПЕРЫ РИСОВАНИЯ =====
 function drawSprite(key, x, y, sizeOverride) {
     const s = SPRITES[key];
     const size = sizeOverride || s.size;
     if (s.loaded) ctx.drawImage(s.img, x - size/2, y - size/2, size, size);
     else { ctx.beginPath(); ctx.arc(x, y, size * 0.35, 0, Math.PI * 2); ctx.fillStyle = '#444'; ctx.fill(); }
 }
-// ★ Без save/restore при alpha=1
 function drawSpriteBottom(key, x, bottomY, width, alpha = 1) {
     const s = SPRITES[key];
     if (!s.loaded) {
@@ -372,16 +370,13 @@ function drawSpriteBottom(key, x, bottomY, width, alpha = 1) {
         ctx.drawImage(s.img, x - width/2, bottomY - h, width, h);
     }
 }
-// ★ Рисует затемнённую версию спрайта
-function drawDarkSpriteBottom(key, x, bottomY, width, alpha = 1) {
+// ★ Без сброса globalAlpha — внешний решает
+function drawDarkSpriteBottom(key, x, bottomY, width) {
     const s = SPRITES[key];
     if (!s.darkImg) return;
     const ratio = s.darkImg.height / s.darkImg.width;
     const h = width * ratio;
-    const prev = ctx.globalAlpha;
-    ctx.globalAlpha = alpha;
     ctx.drawImage(s.darkImg, x - width/2, bottomY - h, width, h);
-    ctx.globalAlpha = prev;
 }
 function drawRotatedSprite(key, x, y, angle, sizeOverride, alpha = 1) {
     const s = SPRITES[key];
@@ -393,7 +388,6 @@ function drawRotatedSprite(key, x, y, angle, sizeOverride, alpha = 1) {
         if (alpha !== 1) ctx.globalAlpha = 1;
     } else { ctx.beginPath(); ctx.arc(x, y, size * 0.35, 0, Math.PI * 2); ctx.fillStyle = '#444'; ctx.fill(); }
 }
-// ★ Затемнённый повёрнутый спрайт (для укусившего волка)
 function drawRotatedDarkSprite(key, x, y, angle, sizeOverride, alpha = 1) {
     const s = SPRITES[key];
     if (!s.darkImg) { drawRotatedSprite(key, x, y, angle, sizeOverride, alpha); return; }
@@ -476,7 +470,6 @@ function generateWorld() {
             if (Math.hypot(x - 1200, y - 800) < 280 + r) continue;
             if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 25)) continue;
-            // ★ Предвычисляем scale и offY
             obstacles.push({ x, y, r, type: 'tree', scale: depthScale(y), offY: depthOffsetY(y) });
             break;
         }
@@ -1168,7 +1161,6 @@ function updateCamera(dt) {
     cam.y += (ty - cam.y) * lerp;
 }
 
-// ★ Рисует волка (вынесено)
 function drawWolf(w) {
     if (w.state === 'dying') {
         const t = w.deathT / DEATH_DURATION;
@@ -1191,7 +1183,6 @@ function drawWolf(w) {
         ctx.lineWidth = 2; ctx.stroke();
         drawShadow(w.x, w.y + 8, 18, 0.5);
         drawRotatedDarkSprite('wolf', w.x, w.y, w.angle + ROT_OFFSET_WOLF, SPRITES.wolf.size);
-        // доп. тёмный круг в центре
         const prevA = ctx.globalAlpha;
         ctx.globalAlpha = 0.45;
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -1270,12 +1261,11 @@ function drawHunter() {
     }
 }
 
-// ===== ОТРИСОВКА =====
 function draw() {
     ctx.fillStyle = '#050a07';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ★ ТРАВА: одно изображение только видимой области
+    // Трава
     if (grassCanvas) {
         const viewLeft = Math.max(0, cam.x);
         const viewTop = Math.max(0, cam.y);
@@ -1290,7 +1280,7 @@ function draw() {
         }
     }
 
-    // ★ СВЕЧЕНИЕ КОСТРА (под объектами)
+    // Свечение костра
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1303,7 +1293,7 @@ function draw() {
     ctx.beginPath(); ctx.arc(campfire.x, campfire.y, campfire.radius * 4.5 * pulse, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
 
-    // ★ ФИЛЬТРАЦИЯ ПО КАМЕРЕ
+    // Фильтрация по камере
     const viewLeft = cam.x - 200;
     const viewRight = cam.x + viewW() + 200;
     const viewTop = cam.y - 300;
@@ -1439,7 +1429,7 @@ function draw() {
 
     ctx.restore();
 
-    // ★ ЁЖ и КОСТЁР — поверх деревьев
+    // Ёж и костёр поверх деревьев
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1467,7 +1457,7 @@ function draw() {
     hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
     ctx.fillStyle = hGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ★ СИЛУЭТЫ КРОН (через darkImg, без filter)
+    // ★ Силуэты крон — обычный спрайт с globalAlpha 0.15
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1480,12 +1470,12 @@ function draw() {
         const trunkW = o.r * 2.4 * scale;
         const trunkH = trunkW * (TREE_TRUNK_BASE_H / TREE_TRUNK_BASE_W);
         const crownW = o.r * 4.5 * scale;
-        drawDarkSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW, 1);
+        drawSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW);
     });
     ctx.globalAlpha = 1;
     ctx.restore();
 
-    // ★ ГЛАЗА ВОЛКОВ В ТЕМНОТЕ
+    // Глаза волков в темноте
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1545,7 +1535,6 @@ function gameLoop(t) {
     requestAnimationFrame(gameLoop);
 }
 
-// ★ Строим траву при загрузке
 if (SPRITES.grass.loaded) buildGrassCanvas();
 else SPRITES.grass.img.addEventListener('load', () => buildGrassCanvas());
 
