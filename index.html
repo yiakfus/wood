@@ -1469,7 +1469,7 @@ function draw() {
         const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
         const trunkW = o.r * 2.4 * scale;
         const trunkH = trunkW * (TREE_TRUNK_BASE_H / TREE_TRUNK_BASE_W);
-        const crownW = o.r * 4.5 * scale;
+        const crownW = o.r * 5.5 * scale;
         drawSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW);
     });
     ctx.globalAlpha = 1;
