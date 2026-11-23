@@ -1329,7 +1329,7 @@ function draw() {
             const scale = o.scale !== undefined ? o.scale : depthScale(o.y);
             const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
             if (o.type === 'tree') {
-                const trunkW = o.r * 2.4 * scale;
+                const trunkW = o.r * 2.0 * scale;
                 drawSpriteBottom('tree_trunk_1', o.x, o.y + offY, trunkW);
                 const trunkH = trunkW * (TREE_TRUNK_BASE_H / TREE_TRUNK_BASE_W);
                 const crownW = o.r * 5.5 * scale;
