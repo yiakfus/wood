@@ -150,6 +150,15 @@ const DEPTH_SCALE_MIN = 0.85;
 const DEPTH_SCALE_MAX = 1.15;
 const DEPTH_OFFSET_MAX = 20;
 
+const CLEARING_CX = 1200;
+const CLEARING_CY = 900;
+const CLEARING_RX = 280;
+const CLEARING_RY_RATIO = 0.55;
+
+const TREE_ALPHA_NEAR = 100;
+const TREE_ALPHA_FAR = 350;
+const TREE_ALPHA_MIN = 0.25;
+
 const DIFFICULTIES = {
     easy: {
         label: 'Лёгкий',
@@ -189,14 +198,13 @@ const SPRITES = {
     hunter:   { path: 'https://yiakfus.github.io/wood/asset/sprites/hunter.png',   size: 60,  loaded: false },
     campfire: { path: 'https://yiakfus.github.io/wood/asset/sprites/campfire.png', size: 72,  loaded: false },
     tree_trunk_1: { path: 'https://yiakfus.github.io/wood/asset/sprites/tree_trunk_1.png', size: 140, loaded: false },
-    tree_crown_1: { path: 'https://yiakfus.github.io/wood/tree_crown_3.png', size: 160, loaded: false },
-    rock:     { path: 'https://yiakfus.github.io/wood/asset/sprites/rock2.png',     size: 56,  loaded: false },
-    bush:     { path: 'https://yiakfus.github.io/wood/asset/sprites/bush2.png',     size: 140, loaded: false },
+    tree_crown_1: { path: 'https://yiakfus.github.io/wood/asset/sprites/tree_crown_3.png', size: 160, loaded: false },
+    rock:     { path: 'https://yiakfus.github.io/wood/asset/sprites/rock.png',     size: 56,  loaded: false },
+    bush:     { path: 'https://yiakfus.github.io/wood/asset/sprites/bush.png',     size: 140, loaded: false },
     trap:     { path: 'https://yiakfus.github.io/wood/asset/sprites/trap.png',     size: 96,  loaded: false },
     grass:    { path: 'https://yiakfus.github.io/wood/asset/sprites/grass.png',    size: 96,  loaded: false },
 };
 
-// ★ Затемнённая версия только для волка
 function makeDarkVersion(key) {
     const s = SPRITES[key];
     if (!s.loaded) return;
@@ -346,6 +354,23 @@ function depthOffsetY(y) {
     return (k - 0.5) * DEPTH_OFFSET_MAX * 2;
 }
 
+function insideClearing(x, y, margin = 0) {
+    const rx = CLEARING_RX + margin;
+    const ry = rx * CLEARING_RY_RATIO;
+    const nx = (x - CLEARING_CX) / rx;
+    const ny = (y - CLEARING_CY) / ry;
+    return (nx * nx + ny * ny) < 1;
+}
+
+function treeAlpha(o) {
+    if (o.y <= hedgehog.y) return 1;
+    const d = Math.hypot(o.x - hedgehog.x, o.y - hedgehog.y);
+    if (d >= TREE_ALPHA_FAR) return 1;
+    if (d <= TREE_ALPHA_NEAR) return TREE_ALPHA_MIN;
+    const t = (d - TREE_ALPHA_NEAR) / (TREE_ALPHA_FAR - TREE_ALPHA_NEAR);
+    return TREE_ALPHA_MIN + t * (1 - TREE_ALPHA_MIN);
+}
+
 // ===== ХЕЛПЕРЫ РИСОВАНИЯ =====
 function drawSprite(key, x, y, sizeOverride) {
     const s = SPRITES[key];
@@ -369,14 +394,6 @@ function drawSpriteBottom(key, x, bottomY, width, alpha = 1) {
     } else {
         ctx.drawImage(s.img, x - width/2, bottomY - h, width, h);
     }
-}
-// ★ Без сброса globalAlpha — внешний решает
-function drawDarkSpriteBottom(key, x, bottomY, width) {
-    const s = SPRITES[key];
-    if (!s.darkImg) return;
-    const ratio = s.darkImg.height / s.darkImg.width;
-    const h = width * ratio;
-    ctx.drawImage(s.darkImg, x - width/2, bottomY - h, width, h);
 }
 function drawRotatedSprite(key, x, y, angle, sizeOverride, alpha = 1) {
     const s = SPRITES[key];
@@ -467,8 +484,8 @@ function generateWorld() {
     for (let i = 0; i < 100; i++) {
         for (let tries = 0; tries < 40; tries++) {
             const x = randRange(60, WORLD_W - 60), y = randRange(60, WORLD_H - 60), r = randRange(28, 38);
-            if (Math.hypot(x - 1200, y - 800) < 280 + r) continue;
-            if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
+            if (insideClearing(x, y, r)) continue;
+            if (Math.hypot(x - 1200, y - 980) < 80 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 25)) continue;
             obstacles.push({ x, y, r, type: 'tree', scale: depthScale(y), offY: depthOffsetY(y) });
             break;
@@ -477,8 +494,8 @@ function generateWorld() {
     for (let i = 0; i < 30; i++) {
         for (let tries = 0; tries < 40; tries++) {
             const x = randRange(60, WORLD_W - 60), y = randRange(60, WORLD_H - 60), r = randRange(20, 30);
-            if (Math.hypot(x - 1200, y - 800) < 280 + r) continue;
-            if (Math.hypot(x - 1200, y - 980) < 100 + r) continue;
+            if (insideClearing(x, y, r)) continue;
+            if (Math.hypot(x - 1200, y - 980) < 80 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 25)) continue;
             obstacles.push({ x, y, r, type: 'rock', scale: depthScale(y), offY: depthOffsetY(y) });
             break;
@@ -1161,6 +1178,7 @@ function updateCamera(dt) {
     cam.y += (ty - cam.y) * lerp;
 }
 
+// ★ Рисует волка
 function drawWolf(w) {
     if (w.state === 'dying') {
         const t = w.deathT / DEATH_DURATION;
@@ -1280,7 +1298,7 @@ function draw() {
         }
     }
 
-    // Свечение костра
+    // Свечение костра (на земле, до тьмы)
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1299,6 +1317,7 @@ function draw() {
     const viewTop = cam.y - 300;
     const viewBottom = cam.y + viewH() + 200;
 
+    // Сбор drawables
     const drawables = [];
     obstacles.forEach(o => {
         if (o.x < viewLeft || o.x > viewRight || o.y < viewTop || o.y > viewBottom) return;
@@ -1316,7 +1335,9 @@ function draw() {
         if (w.x < viewLeft || w.x > viewRight || w.y < viewTop || w.y > viewBottom) return;
         drawables.push({ kind: 'wolf', ref: w, y: w.y });
     });
-    drawables.push({ kind: 'hunter', ref: hunter, y: hunter.y });
+    drawables.push({ kind: 'hunter',   ref: hunter,   y: hunter.y });
+    drawables.push({ kind: 'hedgehog', ref: hedgehog, y: hedgehog.y });
+    drawables.push({ kind: 'campfire', ref: campfire, y: campfire.y });
     drawables.sort((a, b) => a.y - b.y);
 
     ctx.save();
@@ -1329,11 +1350,13 @@ function draw() {
             const scale = o.scale !== undefined ? o.scale : depthScale(o.y);
             const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
             if (o.type === 'tree') {
-                const trunkW = o.r * 2.0 * scale;
-                drawSpriteBottom('tree_trunk_1', o.x, o.y + offY, trunkW);
+                // ★ Пункт 3: прозрачность для деревьев перед ежом
+                const alpha = treeAlpha(o);
+                const trunkW = o.r * 2.4 * scale;
+                drawSpriteBottom('tree_trunk_1', o.x, o.y + offY, trunkW, alpha);
                 const trunkH = trunkW * (TREE_TRUNK_BASE_H / TREE_TRUNK_BASE_W);
-                const crownW = o.r * 5.5 * scale;
-                drawSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW);
+                const crownW = o.r * 4.5 * scale;
+                drawSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW, alpha);
             } else {
                 drawShadow(o.x, o.y + o.r * 0.4, o.r * 1.1);
                 drawSprite('rock', o.x, o.y + offY, o.r * 2.1 * scale);
@@ -1359,6 +1382,15 @@ function draw() {
         }
         else if (d.kind === 'hunter') {
             drawHunter();
+        }
+        else if (d.kind === 'hedgehog') {
+            drawShadow(hedgehog.x, hedgehog.y + 8, 16);
+            ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
+            drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
+            ctx.globalAlpha = 1;
+        }
+        else if (d.kind === 'campfire') {
+            drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
         }
     });
 
@@ -1429,18 +1461,7 @@ function draw() {
 
     ctx.restore();
 
-    // Ёж и костёр поверх деревьев
-    ctx.save();
-    ctx.scale(ZOOM, ZOOM);
-    ctx.translate(-cam.x, -cam.y);
-    drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
-    drawShadow(hedgehog.x, hedgehog.y + 8, 16);
-    ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
-    drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
-    ctx.globalAlpha = 1;
-    ctx.restore();
-
-    // Слой тьмы
+    // ===== СЛОЙ ТЬМЫ =====
     const cx = (campfire.x - cam.x) * ZOOM, cy = (campfire.y - cam.y) * ZOOM;
     const litR = 200 * ZOOM, darkR = 550 * ZOOM;
     const darkGrad = ctx.createRadialGradient(cx, cy, litR, cx, cy, darkR);
@@ -1450,6 +1471,7 @@ function draw() {
     darkGrad.addColorStop(1, 'rgba(0, 0, 0, 1)');
     ctx.fillStyle = darkGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    // Фонарик ежа
     const hx = (hedgehog.x - cam.x) * ZOOM, hy = (hedgehog.y - cam.y) * ZOOM;
     const hGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, 300 * (ZOOM / 2.2));
     hGrad.addColorStop(0, 'rgba(255, 220, 150, 0.32)');
@@ -1457,7 +1479,7 @@ function draw() {
     hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
     ctx.fillStyle = hGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // ★ Силуэты крон — обычный спрайт с globalAlpha 0.15
+    // Силуэты крон в темноте (0.15)
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1467,15 +1489,15 @@ function draw() {
         if (o.x < viewLeft || o.x > viewRight || o.y < viewTop || o.y > viewBottom) return;
         const scale = o.scale !== undefined ? o.scale : depthScale(o.y);
         const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
-        const trunkW = o.r * 2.0 * scale;
+        const trunkW = o.r * 2.4 * scale;
         const trunkH = trunkW * (TREE_TRUNK_BASE_H / TREE_TRUNK_BASE_W);
-        const crownW = o.r * 5.5 * scale;
+        const crownW = o.r * 4.5 * scale;
         drawSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW);
     });
     ctx.globalAlpha = 1;
     ctx.restore();
 
-    // Глаза волков в темноте
+    // Глаза волков в темноте (после тьмы)
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1491,6 +1513,7 @@ function draw() {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
+    // HUD
     document.getElementById('hedgehogHP').textContent = Math.max(0, hedgehog.hp);
     document.getElementById('hunterHP').textContent   = Math.max(0, hunter.hp);
     document.getElementById('reloadStatus').textContent = reloadTimer > 0 ? reloadTimer.toFixed(1) + 'с' : 'Готов';
