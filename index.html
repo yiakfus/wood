@@ -1010,7 +1010,13 @@ function updateWolves(dt) {
         let diff = behindAngle - angleAround;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
-        const dirSign = diff > 0 ? 1 : -1;
+       let dirSign;
+        if (wolf._lastDirSign !== undefined && Math.abs(diff) < 0.25) {
+            dirSign = wolf._lastDirSign;
+        } else {
+            dirSign = diff > 0 ? 1 : -1;
+        }
+        wolf._lastDirSign = dirSign;
         const tangentX = -Math.sin(angleAround) * dirSign;
         const tangentY = Math.cos(angleAround) * dirSign;
         const radialError = dc - CIRCLE;
@@ -1329,7 +1335,7 @@ function draw() {
     });
     traps.forEach(t => {
         if (t.x < viewLeft || t.x > viewRight || t.y < viewTop || t.y > viewBottom) return;
-        drawables.push({ kind: 'trap', ref: t, y: t.y });
+        drawables.push({ kind: 'trap', ref: t, y: -1000000 });
     });
     wolves.forEach(w => {
         if (w.x < viewLeft || w.x > viewRight || w.y < viewTop || w.y > viewBottom) return;
@@ -1358,7 +1364,6 @@ function draw() {
                 const crownW = o.r * 5.0 * scale;
                 drawSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW, alpha);
             } else {
-                drawShadow(o.x, o.y + o.r * 0.4, o.r * 1.1);
                 drawSprite('rock', o.x, o.y + offY, o.r * 2.1 * scale);
             }
         }
