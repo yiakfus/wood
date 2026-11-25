@@ -1389,7 +1389,7 @@ function draw() {
             const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
             if (o.type === 'tree') {
                 const alpha = treeAlpha(o);
-                const treeW = o.r * 4.5 * scale;
+                const treeW = o.r * 6 * scale;
                 drawTreeBottom(o, o.y + offY, treeW, alpha);
             } else {
                 // Камни — без тени
@@ -1523,7 +1523,7 @@ function draw() {
         if (o.x < viewLeft || o.x > viewRight || o.y < viewTop || o.y > viewBottom) return;
         const scale = o.scale !== undefined ? o.scale : depthScale(o.y);
         const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
-        const treeW = o.r * 4.5 * scale;
+        const treeW = o.r * 6 * scale;
         drawTreeBottom(o, o.y + offY, treeW);
     });
     ctx.globalAlpha = 1;
