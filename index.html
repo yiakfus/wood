@@ -144,8 +144,6 @@ const ROT_OFFSET_WOLF     = -Math.PI / 2;
 const ROT_OFFSET_HUNTER   = -Math.PI / 2;
 const WIN_KILLS = 25;
 
-const TREE_TRUNK_BASE_W = 60;
-const TREE_TRUNK_BASE_H = 140;
 const DEPTH_SCALE_MIN = 0.85;
 const DEPTH_SCALE_MAX = 1.15;
 const DEPTH_OFFSET_MAX = 20;
@@ -197,10 +195,9 @@ const SPRITES = {
     wolf:     { path: 'https://yiakfus.github.io/wood/asset/sprites/wolf.png',     size: 90,  loaded: false },
     hunter:   { path: 'https://yiakfus.github.io/wood/asset/sprites/hunter.png',   size: 60,  loaded: false },
     campfire: { path: 'https://yiakfus.github.io/wood/asset/sprites/campfire.png', size: 72,  loaded: false },
-    tree_trunk_1: { path: 'https://yiakfus.github.io/wood/asset/sprites/tree_trunk_1.png', size: 140, loaded: false },
-    tree_crown_1: { path: 'https://yiakfus.github.io/wood/tree_crown_3.png', size: 160, loaded: false },
-    rock:     { path: 'https://yiakfus.github.io/wood/asset/sprites/rock2.png',     size: 56,  loaded: false },
-    bush:     { path: 'https://yiakfus.github.io/wood/asset/sprites/bush2.png',     size: 140, loaded: false },
+    tree:     { path: 'https://yiakfus.github.io/wood/asset/sprites/tree.png',     size: 200, loaded: false },
+    rock:     { path: 'https://yiakfus.github.io/wood/asset/sprites/rock.png',     size: 56,  loaded: false },
+    bush:     { path: 'https://yiakfus.github.io/wood/asset/sprites/bush.png',     size: 140, loaded: false },
     trap:     { path: 'https://yiakfus.github.io/wood/asset/sprites/trap.png',     size: 96,  loaded: false },
     grass:    { path: 'https://yiakfus.github.io/wood/asset/sprites/grass.png',    size: 96,  loaded: false },
 };
@@ -219,6 +216,32 @@ function makeDarkVersion(key) {
     s.darkImg = c;
 }
 
+function makeTreeVariants() {
+    const s = SPRITES.tree;
+    if (!s.loaded) return;
+    const tints = [
+        'rgba(0, 0, 0, 0)',
+        'rgba(90, 110, 20, 0.18)',
+        'rgba(20, 50, 95, 0.20)',
+        'rgba(0, 0, 0, 0.18)'
+    ];
+    s.variants = [];
+    for (const t of tints) {
+        const c = document.createElement('canvas');
+        c.width = s.img.width;
+        c.height = s.img.height;
+        const cx = c.getContext('2d');
+        cx.imageSmoothingEnabled = false;
+        cx.drawImage(s.img, 0, 0);
+        cx.globalCompositeOperation = 'source-atop';
+        cx.fillStyle = t;
+        cx.fillRect(0, 0, c.width, c.height);
+        cx.globalCompositeOperation = 'source-over';
+        s.variants.push(c);
+    }
+    console.log('✓ tree variants:', s.variants.length);
+}
+
 for (const key in SPRITES) {
     const s = SPRITES[key];
     s.img = new Image();
@@ -226,6 +249,7 @@ for (const key in SPRITES) {
         s.loaded = true;
         console.log('✓', key);
         if (key === 'wolf') makeDarkVersion(key);
+        if (key === 'tree') makeTreeVariants();
     };
     s.img.onerror = () => { console.error('✗ не загрузился:', s.path); };
     s.img.src = s.path;
@@ -378,21 +402,25 @@ function drawSprite(key, x, y, sizeOverride) {
     if (s.loaded) ctx.drawImage(s.img, x - size/2, y - size/2, size, size);
     else { ctx.beginPath(); ctx.arc(x, y, size * 0.35, 0, Math.PI * 2); ctx.fillStyle = '#444'; ctx.fill(); }
 }
-function drawSpriteBottom(key, x, bottomY, width, alpha = 1) {
-    const s = SPRITES[key];
-    if (!s.loaded) {
-        ctx.beginPath(); ctx.arc(x, bottomY, width * 0.35, 0, Math.PI * 2); ctx.fillStyle = '#444'; ctx.fill();
+function drawTreeBottom(o, bottomY, width, alpha = 1) {
+    const s = SPRITES.tree;
+    if (!s.loaded || !s.variants) {
+        ctx.beginPath();
+        ctx.arc(o.x, bottomY, width * 0.35, 0, Math.PI * 2);
+        ctx.fillStyle = '#444';
+        ctx.fill();
         return;
     }
-    const ratio = s.img.height / s.img.width;
+    const img = s.variants[o.variantIndex || 0] || s.variants[0];
+    const ratio = img.height / img.width;
     const h = width * ratio;
     if (alpha !== 1) {
         const prev = ctx.globalAlpha;
         ctx.globalAlpha = alpha;
-        ctx.drawImage(s.img, x - width/2, bottomY - h, width, h);
+        ctx.drawImage(img, o.x - width / 2, bottomY - h, width, h);
         ctx.globalAlpha = prev;
     } else {
-        ctx.drawImage(s.img, x - width/2, bottomY - h, width, h);
+        ctx.drawImage(img, o.x - width / 2, bottomY - h, width, h);
     }
 }
 function drawRotatedSprite(key, x, y, angle, sizeOverride, alpha = 1) {
@@ -487,7 +515,11 @@ function generateWorld() {
             if (insideClearing(x, y, r)) continue;
             if (Math.hypot(x - 1200, y - 980) < 80 + r) continue;
             if (obstacles.some(o => Math.hypot(o.x - x, o.y - y) < o.r + r + 25)) continue;
-            obstacles.push({ x, y, r, type: 'tree', scale: depthScale(y), offY: depthOffsetY(y) });
+            obstacles.push({
+                x, y, r, type: 'tree',
+                scale: depthScale(y), offY: depthOffsetY(y),
+                variantIndex: Math.floor(Math.random() * 4)
+            });
             break;
         }
     }
@@ -1010,7 +1042,7 @@ function updateWolves(dt) {
         let diff = behindAngle - angleAround;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
-       let dirSign;
+        let dirSign;
         if (wolf._lastDirSign !== undefined && Math.abs(diff) < 0.25) {
             dirSign = wolf._lastDirSign;
         } else {
@@ -1304,7 +1336,7 @@ function draw() {
         }
     }
 
-    // Свечение костра (на земле, до тьмы)
+    // Свечение костра на земле
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1356,14 +1388,11 @@ function draw() {
             const scale = o.scale !== undefined ? o.scale : depthScale(o.y);
             const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
             if (o.type === 'tree') {
-                // ★ Пункт 3: прозрачность для деревьев перед ежом
                 const alpha = treeAlpha(o);
-                const trunkW = o.r * 2.0 * scale;
-                drawSpriteBottom('tree_trunk_1', o.x, o.y + offY, trunkW, alpha);
-                const trunkH = trunkW * (TREE_TRUNK_BASE_H / TREE_TRUNK_BASE_W);
-                const crownW = o.r * 5.0 * scale;
-                drawSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW, alpha);
+                const treeW = o.r * 4.5 * scale;
+                drawTreeBottom(o, o.y + offY, treeW, alpha);
             } else {
+                // Камни — без тени
                 drawSprite('rock', o.x, o.y + offY, o.r * 2.1 * scale);
             }
         }
@@ -1399,7 +1428,7 @@ function draw() {
         }
     });
 
-    // Частицы / эффекты
+    // Частицы и эффекты
     hearts.forEach(h => {
         const bob = Math.sin(h.bobPhase) * 4;
         const alpha = h.life < 3 ? (h.life / 3) * 0.8 + 0.2 : 1;
@@ -1484,7 +1513,7 @@ function draw() {
     hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
     ctx.fillStyle = hGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Силуэты крон в темноте (0.15)
+    // Силуэты деревьев в темноте (0.15)
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1494,15 +1523,13 @@ function draw() {
         if (o.x < viewLeft || o.x > viewRight || o.y < viewTop || o.y > viewBottom) return;
         const scale = o.scale !== undefined ? o.scale : depthScale(o.y);
         const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
-        const trunkW = o.r * 2.0 * scale;
-        const trunkH = trunkW * (TREE_TRUNK_BASE_H / TREE_TRUNK_BASE_W);
-        const crownW = o.r * 5.0 * scale;
-        drawSpriteBottom('tree_crown_1', o.x, o.y + offY - trunkH, crownW);
+        const treeW = o.r * 4.5 * scale;
+        drawTreeBottom(o, o.y + offY, treeW);
     });
     ctx.globalAlpha = 1;
     ctx.restore();
 
-    // Глаза волков в темноте (после тьмы)
+    // Глаза волков в темноте
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
