@@ -157,6 +157,9 @@ const TREE_ALPHA_NEAR = 100;
 const TREE_ALPHA_FAR = 350;
 const TREE_ALPHA_MIN = 0.25;
 
+// ★ Анимация ежа
+const HEDGEHOG_ANIM_FPS = 9;
+
 const DIFFICULTIES = {
     easy: {
         label: 'Лёгкий',
@@ -191,15 +194,16 @@ let currentDiffKey = 'normal';
 let D = DIFFICULTIES[currentDiffKey];
 
 const SPRITES = {
-    hedgehog: { path: 'https://yiakfus.github.io/wood/asset/sprites/hedgehog.png', size: 46,  loaded: false },
-    wolf:     { path: 'https://yiakfus.github.io/wood/asset/sprites/wolf.png',     size: 90,  loaded: false },
-    hunter:   { path: 'https://yiakfus.github.io/wood/asset/sprites/hunter.png',   size: 60,  loaded: false },
-    campfire: { path: 'https://yiakfus.github.io/wood/asset/sprites/campfire.png', size: 72,  loaded: false },
-    tree:     { path: 'https://yiakfus.github.io/wood/asset/sprites/tree.png',     size: 200, loaded: false },
-    rock:     { path: 'https://yiakfus.github.io/wood/asset/sprites/rock2.png',     size: 56,  loaded: false },
-    bush:     { path: 'https://yiakfus.github.io/wood/asset/sprites/bush2.png',     size: 140, loaded: false },
-    trap:     { path: 'https://yiakfus.github.io/wood/asset/sprites/trap.png',     size: 96,  loaded: false },
-    grass:    { path: 'https://yiakfus.github.io/wood/asset/sprites/grass.png',    size: 96,  loaded: false },
+    hedgehog:      { path: 'https://yiakfus.github.io/wood/asset/sprites/hedgehog.png',      size: 46, loaded: false },
+    hedgehog_run:  { path: 'https://yiakfus.github.io/wood/asset/sprites/hedgehog_run.png',  size: 46, loaded: false },
+    wolf:          { path: 'https://yiakfus.github.io/wood/asset/sprites/wolf.png',          size: 90, loaded: false },
+    hunter:        { path: 'https://yiakfus.github.io/wood/asset/sprites/hunter.png',        size: 60, loaded: false },
+    campfire:      { path: 'https://yiakfus.github.io/wood/asset/sprites/campfire.png',      size: 72, loaded: false },
+    tree:          { path: 'https://yiakfus.github.io/wood/asset/sprites/tree.png',          size: 200, loaded: false },
+    rock:          { path: 'https://yiakfus.github.io/wood/asset/sprites/rock.png',          size: 56, loaded: false },
+    bush:          { path: 'https://yiakfus.github.io/wood/asset/sprites/bush.png',          size: 140, loaded: false },
+    trap:          { path: 'https://yiakfus.github.io/wood/asset/sprites/trap.png',          size: 96, loaded: false },
+    grass:         { path: 'https://yiakfus.github.io/wood/asset/sprites/grass.png',         size: 96, loaded: false },
 };
 
 function makeDarkVersion(key) {
@@ -259,6 +263,11 @@ ctx.imageSmoothingEnabled = false;
 const hedgehog = { x: 1200, y: 980, radius: 12, hp: 3, angle: Math.PI / 2 };
 const hunter   = { x: 1200, y: 800, radius: 18, hp: 3, target: null, angle: Math.PI / 2, turnDelay: 0 };
 const campfire = { x: 1200, y: 865, radius: 26 };
+
+// ★ Состояние анимации ежа
+let hedgehogDir = 0;        // 0=вниз, 1=вправо, 2=влево, 3=вверх
+let hedgehogFrame = 0;      // 0–3
+let hedgehogAnimTime = 0;
 
 let obstacles = [];
 let bushes    = [];
@@ -470,6 +479,32 @@ function drawHeart(cx, cy, size, fill, outline, alpha = 1) {
     ctx.fillStyle = fill; ctx.fill();
     ctx.strokeStyle = outline; ctx.lineWidth = 2; ctx.stroke();
     ctx.restore();
+}
+
+// ★ Рисует ежа с учётом направления и кадра
+function drawHedgehog() {
+    drawShadow(hedgehog.x, hedgehog.y + 8, 16);
+    ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
+    const walk = SPRITES.hedgehog_run;
+    if (walk.loaded) {
+        const fw = walk.img.width / 4;   // 128
+        const fh = walk.img.height / 4;  // 128
+        const sx = hedgehogFrame * fw;
+        const sy = hedgehogDir * fh;
+        const size = SPRITES.hedgehog.size;
+        ctx.drawImage(
+            walk.img,
+            sx, sy, fw, fh,
+            hedgehog.x - size / 2,
+            hedgehog.y - size / 2,
+            size, size
+        );
+    } else {
+        // Fallback — старый вращающийся спрайт
+        drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y,
+            hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
+    }
+    ctx.globalAlpha = 1;
 }
 
 function computeBaseZoom() {
@@ -694,6 +729,7 @@ function startGame(diffKey) {
     D = DIFFICULTIES[diffKey];
     resizeCanvas();
     hedgehog.x = 1200; hedgehog.y = 980; hedgehog.hp = 3; hedgehog.angle = Math.PI / 2;
+    hedgehogDir = 0; hedgehogFrame = 0; hedgehogAnimTime = 0;
     hunter.hp = 3; hunter.target = null; hunter.angle = Math.PI / 2; hunter.turnDelay = 0;
     wolves = []; sparks = []; bullets = []; fireParticles = []; damageFlash = 0;
     hearts = []; deathFx = [];
@@ -871,6 +907,25 @@ function updateHedgehog(dt) {
         hedgehog.x += (vx / len) * HEDGEHOG_SPEED * dt;
         hedgehog.y += (vy / len) * HEDGEHOG_SPEED * dt;
         hedgehog.angle = Math.atan2(vy, vx);
+
+        // Направление: горизонталь приоритетнее, если |vx| > |vy|
+        if (Math.abs(vx) > Math.abs(vy)) {
+            hedgehogDir = vx > 0 ? 1 : 2;   // вправо / влево
+        } else {
+            hedgehogDir = vy > 0 ? 0 : 3;   // вниз / вверх
+        }
+
+        // Прокрутка кадров
+        hedgehogAnimTime += dt;
+        const frameDur = 1 / HEDGEHOG_ANIM_FPS;
+        if (hedgehogAnimTime >= frameDur) {
+            hedgehogFrame = (hedgehogFrame + 1) % 4;
+            hedgehogAnimTime -= frameDur;
+        }
+    } else {
+        // Стоит — 0-й кадр текущего направления, таймер сброшен
+        hedgehogFrame = 0;
+        hedgehogAnimTime = 0;
     }
     resolveObstacles(hedgehog);
 }
@@ -1389,7 +1444,7 @@ function draw() {
             const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
             if (o.type === 'tree') {
                 const alpha = treeAlpha(o);
-                const treeW = o.r * 6 * scale;
+                const treeW = o.r * 4.5 * scale;
                 drawTreeBottom(o, o.y + offY, treeW, alpha);
             } else {
                 // Камни — без тени
@@ -1418,10 +1473,7 @@ function draw() {
             drawHunter();
         }
         else if (d.kind === 'hedgehog') {
-            drawShadow(hedgehog.x, hedgehog.y + 8, 16);
-            ctx.globalAlpha = isHedgehogHidden() ? 0.5 : 1;
-            drawRotatedSprite('hedgehog', hedgehog.x, hedgehog.y, hedgehog.angle + ROT_OFFSET_HEDGEHOG, SPRITES.hedgehog.size);
-            ctx.globalAlpha = 1;
+            drawHedgehog();
         }
         else if (d.kind === 'campfire') {
             drawSprite('campfire', campfire.x, campfire.y, SPRITES.campfire.size);
@@ -1513,7 +1565,7 @@ function draw() {
     hGrad.addColorStop(1, 'rgba(255, 220, 150, 0)');
     ctx.fillStyle = hGrad; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Силуэты деревьев в темноте (0.15)
+    // Силуэты деревьев в темноте
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
     ctx.translate(-cam.x, -cam.y);
@@ -1523,7 +1575,7 @@ function draw() {
         if (o.x < viewLeft || o.x > viewRight || o.y < viewTop || o.y > viewBottom) return;
         const scale = o.scale !== undefined ? o.scale : depthScale(o.y);
         const offY = o.offY !== undefined ? o.offY : depthOffsetY(o.y);
-        const treeW = o.r * 6 * scale;
+        const treeW = o.r * 4.5 * scale;
         drawTreeBottom(o, o.y + offY, treeW);
     });
     ctx.globalAlpha = 1;
